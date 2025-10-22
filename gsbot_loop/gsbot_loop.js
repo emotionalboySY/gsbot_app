@@ -278,6 +278,24 @@ function checkTimeAndNotify() {
                     }
                 }
 
+                // 3. 매일 특정 시간 체크 (DailyMessage) - 새로 추가된 부분
+                else if (notification.hour !== undefined &&
+                    notification.minute !== undefined &&
+                    notification.year === undefined &&
+                    notification.month === undefined &&
+                    notification.day === undefined &&
+                    notification.dayOfWeek === undefined) {
+
+                    shouldSend = isDailyTime(
+                        notification.hour,
+                        notification.minute
+                    );
+
+                    if (shouldSend) {
+                        Log.d(`매일 알림 조건 충족: 매일 ${notification.hour}:${notification.minute}`);
+                    }
+                }
+
                 // 조건이 맞으면 메시지 전송
                 if (shouldSend && notification.message) {
                     TARGET_ROOMS.forEach(roomName => {
@@ -341,6 +359,19 @@ function isExactDayOfWeekAndTime(dayName, hour, minute) {
         koreaTime.getMinutes() === minute;
 }
 
+// 매일 특정 시간을 체크하는 함수 (새로 추가)
+function isDailyTime(hour, minute) {
+    let now = new Date();
+
+    // UTC 시간을 한국 시간(+9시간)으로 변환
+    let koreaOffset = 9 * 60; // 한국은 UTC+9
+    let localOffset = now.getTimezoneOffset(); // 현재 로컬 타임존의 UTC 차이 (분)
+    let koreaTime = new Date(now.getTime() + (koreaOffset + localOffset) * 60 * 1000);
+
+    return koreaTime.getHours() === hour &&
+        koreaTime.getMinutes() === minute;
+}
+
 function startSyncedAlarmService() {
     if (TimeAlarmManager.intervalId || TimeAlarmManager.initialTimeoutId) {
         Log.d("알람 서비스가 이미 실행 중이거나 예약되어 있습니다.");
@@ -370,16 +401,19 @@ function getNotificationInfo() {
 
     let exactCount = 0;
     let weeklyCount = 0;
+    let dailyCount = 0;
 
     TimeAlarmManager.notifications.forEach(n => {
         if (n.year !== undefined) {
             exactCount++;
         } else if (n.dayOfWeek !== undefined) {
             weeklyCount++;
+        } else if (n.hour !== undefined && n.minute !== undefined) {
+            dailyCount++;
         }
     });
 
-    return `현재 로드된 알림:\n- 정확한 시간: ${exactCount}개\n- 요일 시간: ${weeklyCount}개\n- 총합: ${TimeAlarmManager.notifications.length}개`;
+    return `현재 로드된 알림:\n- 정확한 시간: ${exactCount}개\n- 요일 시간: ${weeklyCount}개\n- 매일 시간: ${dailyCount}개\n- 총합: ${TimeAlarmManager.notifications.length}개`;
 }
 
 // 서비스 시작
