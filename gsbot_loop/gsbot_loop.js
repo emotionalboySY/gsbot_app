@@ -12,6 +12,7 @@ if (typeof TimeAlarmManager === 'undefined') {
 
 const TARGET_ROOMS = ["06-21", "집사 네 마리", "아케인 편안길드", "무친자들의 모임", "앙메톡", "그녀석의 재획교실"]; // 알림을 보낼 방 목록
 const EC2_API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api/intervalMessage/all"; // EC2 엔드포인트 URL
+const FCM_API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api/fcm/send-all"; // fcm 알림 전송 URL
 // 관리자 설정 (명령어를 사용할 수 있는 사용자)
 const ADMIN_USERS = ["승엽[EmotionB_SY]"]; // 관리자 이름 목록
 
@@ -30,6 +31,64 @@ bot.addListener(Event.START_COMPILE, () => {
     }
     Log.d("컴파일 시작: 이전 알람 타이머를 모두 종료합니다.");
 });
+
+// Flutter 앱에 푸시 알림 전송 함수
+function sendNotificationToFlutterApp(title, body, data) {
+    try {
+        Log.d("Flutter 앱에 알림 전송 시도...");
+
+        const URL = Java.type("java.net.URL");
+        const BufferedReader = Java.type("java.io.BufferedReader");
+        const InputStreamReader = Java.type("java.io.InputStreamReader");
+        const OutputStreamWriter = Java.type("java.io.OutputStreamWriter");
+        const StringBuilder = Java.type("java.lang.StringBuilder");
+
+        const url = new URL(FCM_API_URL);
+        const connection = url.openConnection();
+        connection.setRequestMethod("POST");
+        connection.setDoOutput(true);
+        connection.setConnectTimeout(10000); // 10초 타임아웃
+        connection.setReadTimeout(10000);
+        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+        connection.setRequestProperty("Accept", "application/json");
+
+        // JSON 데이터 생성
+        const jsonData = JSON.stringify({
+            title: title,
+            body: body,
+            data: data || {}
+        });
+
+        // 요청 본문 전송
+        const writer = new OutputStreamWriter(connection.getOutputStream(), "UTF-8");
+        writer.write(jsonData);
+        writer.flush();
+        writer.close();
+
+        // 응답 읽기
+        const responseCode = connection.getResponseCode();
+        if (responseCode === 200) {
+            const reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
+            const response = new StringBuilder();
+            let line;
+
+            while ((line = reader.readLine()) !== null) {
+                response.append(line);
+            }
+            reader.close();
+
+            Log.i("✅ Flutter 앱 알림 전송 성공: " + title);
+            return true;
+        } else {
+            Log.e("❌ Flutter 앱 알림 전송 실패: HTTP " + responseCode);
+            return false;
+        }
+
+    } catch (e) {
+        Log.e("Flutter 앱 알림 전송 오류: " + e);
+        return false;
+    }
+}
 
 // EC2에서 알림 데이터를 가져오는 함수
 function fetchNotificationsFromEC2() {
@@ -71,6 +130,17 @@ function fetchNotificationsFromEC2() {
         Log.i("EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.");
         bot.send("승엽[EmotionB_SY]", "EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.");
 
+        // Flutter 앱에 알림 전송
+        sendNotificationToFlutterApp(
+            "알림 데이터 업데이트",
+            count + "개의 알림이 업데이트되었습니다.",
+            {
+                type: "data_update",
+                count: String(count),  // ← 문자열로 변환
+                timestamp: new Date().toISOString()
+            }
+        );
+
         return {
             success: true,
             count: count,
@@ -79,6 +149,18 @@ function fetchNotificationsFromEC2() {
 
     } catch (e) {
         Log.e("EC2에서 데이터 가져오기 실패: " + e);
+
+        // 에러 발생 시에도 Flutter 앱에 알림
+        sendNotificationToFlutterApp(
+            "알림 데이터 로드 실패",
+            "데이터를 가져오는 중 오류가 발생했습니다.",
+            {
+                type: "error",
+                error: String(e),
+                timestamp: new Date().toISOString()
+            }
+        );
+
         return {
             success: false,
             message: "데이터 로드 실패: " + e
