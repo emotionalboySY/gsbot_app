@@ -1,0 +1,8 @@
+{
+  "name": "gsbot-loop",
+  "version": "1.0.0",
+  "description": "MessengerBot script: gsbot_loop",
+  "main": "gsbot_loop.js",
+  "type": "commonjs",
+  "dependencies": {}
+}

@@ -1,0 +1,37 @@
+# 메신저봇R 관련
+bot.json
+log.json
+DebugRoom/
+
+# Node modules
+node_modules/
+package-lock.json
+
+#로그 및 데이터
+*.log
+logs/
+data/
+*.db
+*.sqlite
+
+# 백업 파일
+*.bak
+*.backup
+*_backup.js
+backup/
+
+# 임시 파일
+tmp/
+temp/
+*.tmp
+
+# OS 파일
+.DS_Store
+thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swO
+*.swo
