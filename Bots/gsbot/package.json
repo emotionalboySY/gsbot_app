@@ -1,0 +1,8 @@
+{
+  "name": "gsbot",
+  "version": "1.0.0",
+  "description": "MessengerBot script: gsbot",
+  "main": "gsbot.js",
+  "type": "commonjs",
+  "dependencies": {}
+}

@@ -1,0 +1,8 @@
+{
+    "main": "gsbot.js",
+    "option": {
+        "apiLevel": 2,
+        "useConsoleApi": true,
+        "scriptPower": true
+    }
+}
