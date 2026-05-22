@@ -113,7 +113,12 @@ function fetchNotificationsFromEC2() {
             return false;
         }
 
-        const reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
+        const inputStream = connection.getInputStream();
+        if(inputStream == null) {
+            throw new Error("EC2 응답 InputStream이 null입니다");
+        }
+
+        const reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
         const response = new StringBuilder();
         let line;
 
@@ -123,7 +128,15 @@ function fetchNotificationsFromEC2() {
         reader.close();
 
         const jsonString = String(response.toString());
-        TimeAlarmManager.notifications = JSON.parse(jsonString);
+        if(jsonString == null || jsonString.length === 0) {
+            throw new Error("EC2 응답 본문이 비어있습니다");
+        }
+
+        const parsed = JSON.parse(jsonString);
+        if(parsed == null || !Array.isArray(parsed)) {
+            throw new Error("EC2 알림 데이터가 배열이 아니거나 null입니다");
+        }
+        TimeAlarmManager.notifications = parsed;
 
 
         const count = TimeAlarmManager.notifications.length;
