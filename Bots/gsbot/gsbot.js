@@ -5,6 +5,7 @@ const URLDecoder = Packages.java.net.URLDecoder;
 
 const MESSAGE_PREFIX = '/';
 const API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api";
+const BASE_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000";
 
 /**
  * (string) msg.content: 메시지의 내용
@@ -100,7 +101,7 @@ function onMessage(msg) {
         }
 
         if(stringMatchResult(featString, ["ㅎㅅ", "히스토리", "히스"])) {
-            message = "명령어 실행 결과: 성공\n";
+            message = getNexonAPINotice() + "명령어 실행 결과: 성공\n";
             messageData = "";
 
             let params = {
@@ -113,10 +114,13 @@ function onMessage(msg) {
                 params.characterName = options[0];
             }
 
-            let expData = callApiGet("/history/exp", params);
+            // 통합 히스토리는 경험치 5일 + 레벨 5건만 축약 표시
+            let expParams = Object.assign({}, params, { "days": 5 });
+            let expData = callApiGet("/history/exp", expParams);
             messageData += `\n${expData.resultRaw}\n\n---------------------\n`;
 
-            let levelData = callApiGet("/history/level", params);
+            let levelParams = Object.assign({}, params, { "limit": 5 });
+            let levelData = callApiGet("/history/level", levelParams);
             messageData += `\n${levelData.resultRaw}`;
 
             message += messageData;
@@ -124,7 +128,7 @@ function onMessage(msg) {
         }
 
         if(stringMatchResult(featString, ["ㄱㅎㅊㅎㅅㅌㄹ", "경험치히스토리", "경험치히스토리"])) {
-            message = "명령어 실행 결과: 성공\n";
+            message = getNexonAPINotice() + "명령어 실행 결과: 성공\n";
             messageData = "";
 
             let params = {
@@ -144,7 +148,7 @@ function onMessage(msg) {
         }
 
         if(stringMatchResult(featString, ["ㄹㅂㅎㅅㅌㄹ", "ㄼㅎㅅㅌㄹ", "레벨히스토리", "레벨히스토리"])) {
-            message = "명령어 실행 결과: 성공\n";
+            message = getNexonAPINotice() + "명령어 실행 결과: 성공\n";
             messageData = "";
 
             let params = {
@@ -695,6 +699,291 @@ function onMessage(msg) {
             msg.reply(message);
         }
 
+        if(stringMatchResult(featString, ["이벤트", "ㅇㅂㅌ"])) {
+            message = "";
+
+            let eventData = callApiGet("/homepage/event");
+            message += eventData.resultRaw;
+
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["성향", "ㅅㅎ"])) {
+            message = getNexonAPINotice();
+
+            if(options.length === 1) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let propensityData = callRootApiGet(`/propensity/${encodedName}`);
+                message += propensityData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n성향 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["보스", "ㅂㅅ", "ㅄ"])) {
+            message = "";
+            if(options.length === 2) {
+                let encodedDiff = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
+                let bossData = callRootApiGet(`/boss/${encodedDiff}/${encodedName}`);
+                message += decodeURIComponent(bossData.result);
+            } else {
+                message = "명령어 실행 결과: 실패\n\n보스 명령어는 아래의 규칙에 따라 작성하셔야 합니다.\n\n<보스 명령어 사용 방법>\n\"/보스(ㅄ or ㅂㅅ) [난이도] [보스명]\"\n\n[난이도]: 카오스 / 하드 / 노말 / 노멀 / 이지 / 익스트림 / 익스\n[보스명]: 띄어쓰기를 포함하지 않은 보스명(ex. 가디언 엔젤 슬라임 -> 가디언엔젤슬라임 or 가엔슬)";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["심볼", "ㅅㅂ"])) {
+            message = "";
+            if(options.length >= 1 && options[0] === "1") {
+                if(options.length === 3) {
+                    let symbolData = callRootApiGet(`/symbol1/${options[1]}/${options[2]}`);
+                    message += symbolData.resultRaw;
+                } else {
+                    message = "명령어 실행 결과: 실패\n\n심볼 1 명령어는 /심볼 1 [시작레벨] [목표레벨] 형태로 입력해 주세요.";
+                }
+            } else if(options.length >= 1 && options[0] === "2") {
+                if(options.length === 5) {
+                    let encodedType = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
+                    let symbolData = callRootApiGet(`/symbol2/${encodedType}/${options[2]}/${options[3]}/${options[4]}`);
+                    message += symbolData.resultRaw;
+                } else {
+                    message = "명령어 실행 결과: 실패\n\n심볼 2 명령어는 /심볼 2 [심볼종류] [현재레벨] [현재수치] [목표레벨] 형태로 입력해 주세요.";
+                }
+            } else {
+                message = "명령어 실행 결과: 실패\n\n심볼 명령어는 /심볼 1 또는 /심볼 2 형태로 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["캐시샵", "ㅋㅅㅅ"])) {
+            message = "";
+            let cashShopData = callApiGet("/homepage/cashShop");
+            message += cashShopData.resultRaw;
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["익성비", "ㅇㅅㅂ"])) {
+            message = "";
+            if(options.length === 2) {
+                let extremeData = callRootApiGet(`/extreme/${options[0]}/${options[1]}`);
+                message += extremeData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n익성비 시뮬레이션은 총 2개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["유니온", "ㅇㄴㅇ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 1) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let unionData = callRootApiGet(`/union/${encodedName}`);
+                message += unionData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n유니온 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["녹옥", "ㄴㅇ"])) {
+            message = "";
+            if(options.length === 1) {
+                let seedRingData = callRootApiGet(`/seedRing/0/${options[0]}`);
+                message += seedRingData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n녹옥 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["홍옥", "ㅎㅇ1"])) {
+            message = "";
+            if(options.length === 1) {
+                let seedRingData = callRootApiGet(`/seedRing/1/${options[0]}`);
+                message += seedRingData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n홍옥 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["흑옥", "ㅎㅇ2"])) {
+            message = "";
+            if(options.length === 1) {
+                let seedRingData = callRootApiGet(`/seedRing/2/${options[0]}`);
+                message += seedRingData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n흑옥 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["백옥", "ㅂㅇ"])) {
+            message = "";
+            if(options.length === 1) {
+                let seedRingData = callRootApiGet(`/seedRing/3/${options[0]}`);
+                message += seedRingData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n백옥 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["행운의채널", "채널", "ㅎㅇㅇㅊㄴ"])) {
+            message = "";
+            let channelData = callRootApiGet("/randomChannel");
+            message += channelData.resultRaw;
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["솔에르다", "6차", "ㅅㅇㄹㄷ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 1) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let sixData = callRootApiGet(`/info_six/${encodedName}`);
+                message += sixData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n6차 강화상태 조회는 /솔에르다 [캐릭터명] 형태로 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["선데이", "썬데이", "ㅅㄷㅇ"])) {
+            message = "";
+            let sundayData = callRootApiGet("/sunday");
+            message += sundayData.resultRaw;
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["하이퍼스탯", "ㅎㅇㅍㅅㅌ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 2) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let hyperStatData = callRootApiGet(`/hyperStat/${encodedName}/${options[1]}`);
+                message += hyperStatData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n하이퍼스탯 조회는 총 2개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["어빌리티", "어빌", "ㅇㅂㄹㅌ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 1) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let abilityData = callRootApiGet(`/ability/${encodedName}`);
+                message += abilityData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n어빌리티 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["인기도", "ㅇㄱㄷ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 1) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let popularityData = callRootApiGet(`/popularity/${encodedName}`);
+                message += popularityData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n인기도 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["전투력", "ㅈㅌㄹ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 1) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let fightingPowerData = callRootApiGet(`/fightingPower/${encodedName}`);
+                message += fightingPowerData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n전투력 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["헥사스탯", "ㅎㅅㅅㅌ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 1) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let hexaStatData = callRootApiGet(`/hexaStat/${encodedName}`);
+                message += hexaStatData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n헥사스탯 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["정보", "ㅈㅂ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 1) {
+                let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let infoData = callRootApiGet(`/info/${encodedName}`);
+                message += infoData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n정보 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["랭킹", "ㄹㅋ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 1) {
+                let params = { "characterName": options[0] };
+                let rankingData = callApiGet("/ranking/character", params);
+                message += rankingData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n랭킹 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["공지", "ㄱㅈ"])) {
+            message = "";
+            let noticeData = callApiGet("/homepage/notice");
+            message += noticeData.resultRaw;
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["업데이트", "ㅇㄷㅇㅌ"])) {
+            message = "";
+            let updateData = callApiGet("/homepage/update");
+            message += updateData.resultRaw;
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["exp"])) {
+            message = "";
+            if(options.length === 4) {
+                let expCouponData = callRootApiGet(`/exp_coupon/${options[0]}/${options[1]}/${options[2]}/${options[3]}`);
+                message += expCouponData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\nEXP쿠폰 계산은 총 4개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["길드랭킹", "ㄱㄷㄹㅋ"])) {
+            message = getNexonAPINotice();
+            if(options.length === 2) {
+                let params = {
+                    "worldName": options[0],
+                    "guildName": options[1]
+                };
+                let encodedWorld = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let encodedGuild = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
+                let guildData = callApiGet(`/ranking/guild/${encodedWorld}/${encodedGuild}`);
+                message += guildData.resultRaw;
+            } else {
+                message = "명령어 실행 결과: 실패\n\n길드랭킹 조회는 총 2개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            }
+            msg.reply(message);
+        }
+
         if(stringMatchResult(featString, ["도움말", "명령어", "ㄷㅇㅁ", "ㅁㄹㅇ"])) {
             let helpData = callApiGet("/extra/help");
 
@@ -744,7 +1033,24 @@ function callApiGet(apiFeat, params) {
         .ignoreContentType(true)
         .get();
 
-    return JSON.parse(response.body().text());
+    if(response == null || response.body() == null) {
+        throw new Error("callApiGet 응답이 null입니다 (" + apiUrl + ")");
+    }
+
+    let body = response.body().text();
+    if(body == null || body.length === 0) {
+        throw new Error("callApiGet 응답 본문이 비어있습니다 (" + apiUrl + ")");
+    }
+
+    let data = JSON.parse(body);
+    if(data == null) {
+        throw new Error("callApiGet JSON 파싱 결과가 null입니다 (" + apiUrl + ")");
+    }
+    // resultRaw가 없으면 result를 디코딩하여 보충
+    if(data.resultRaw === undefined && data.result !== undefined) {
+        data.resultRaw = decodeURIComponent(data.result);
+    }
+    return data;
 }
 
 function callApiPost(apiFeat, dataObj) {
@@ -760,7 +1066,73 @@ function callApiPost(apiFeat, dataObj) {
 
     let response = connection.post();
 
-    return JSON.parse(response.body().text());
+    if(response == null || response.body() == null) {
+        throw new Error("callApiPost 응답이 null입니다 (" + apiUrl + ")");
+    }
+
+    let body = response.body().text();
+    if(body == null || body.length === 0) {
+        throw new Error("callApiPost 응답 본문이 비어있습니다 (" + apiUrl + ")");
+    }
+
+    let data = JSON.parse(body);
+    if(data == null) {
+        throw new Error("callApiPost JSON 파싱 결과가 null입니다 (" + apiUrl + ")");
+    }
+    return data;
+}
+
+// /api 프리픽스 없이 루트 레벨 엔드포인트 호출용
+function callRootApiGet(apiFeat, params) {
+    let apiUrl = `${BASE_URL}${apiFeat}`;
+
+    if(params) {
+        let queryString = [];
+        for(let key in params) {
+            if (params.hasOwnProperty(key)) {
+                let encodedValue = Packages.java.net.URLEncoder.encode(String(params[key]), "UTF-8");
+                queryString.push(key + "=" + encodedValue);
+            }
+        }
+
+        if (queryString.length > 0) {
+            apiUrl += `?${queryString.join("&")}`;
+        }
+    }
+
+    let response = JSOUP.connect(apiUrl)
+        .ignoreContentType(true)
+        .get();
+
+    if(response == null || response.body() == null) {
+        throw new Error("callRootApiGet 응답이 null입니다 (" + apiUrl + ")");
+    }
+
+    let body = response.body().text();
+    if(body == null || body.length === 0) {
+        throw new Error("callRootApiGet 응답 본문이 비어있습니다 (" + apiUrl + ")");
+    }
+
+    let data = JSON.parse(body);
+    if(data == null) {
+        throw new Error("callRootApiGet JSON 파싱 결과가 null입니다 (" + apiUrl + ")");
+    }
+    // resultRaw가 없으면 result를 디코딩하여 보충
+    if(data.resultRaw === undefined && data.result !== undefined) {
+        data.resultRaw = decodeURIComponent(data.result);
+    }
+    return data;
+}
+
+// Nexon OpenAPI 갱신 시간(0시~1시) 알림 메시지
+function getNexonAPINotice() {
+    let date = new Date();
+    // KST 기준 0시 ~ 1시대(=00:00~02:00 사이)인 경우 안내
+    let hours = date.getHours();
+    if(hours === 0 || hours === 1) {
+        return "※ 매일 오전 0시 ~ 2시 사이에는 Nexon OpenAPI 갱신 작업으로 전일 데이터 조회가 불가능합니다. (실시간 데이터 조회는 가능)\n\n";
+    }
+    return "";
 }
 
 function getNowDateKor() {
