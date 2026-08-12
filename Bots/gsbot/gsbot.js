@@ -17,15 +17,35 @@ const MESSAGE_PREFIX = '/';
 // 확인되지 않은 방은 평문으로 떨어뜨린다 — 마크다운 전송은 실패해도 true 를
 // 반환해서 감지가 불가능하고, 잘못 켜면 사용자가 아무 응답도 못 받는다.
 //
-// ⚠ 알려진 부작용
-//  - 전송할 때마다 카카오톡이 해당 방을 포그라운드로 연다. 그 상태로 두면
-//    그 방의 알림이 뜨지 않아 봇이 다음 메시지를 놓친다.
-//  - 폰을 최근에 만지지 않았으면 안드로이드 BAL 정책에 막혀 전송이 유실된다.
-//    (SYSTEM_ALERT_WINDOW 권한을 부여하면 해소됨)
+// 마크다운 전송은 MediaSendActivity 를 거쳐 ACTION_SEND 로 나가므로 카카오톡이
+// 해당 방을 포그라운드로 연다. 그대로 두면 그 방의 알림이 뜨지 않아 봇이 다음
+// 메시지를 놓치므로, 전송 후 홈 화면으로 되돌린다(returnToHome).
+//
+// ⚠ 전제: 메신저봇에 SYSTEM_ALERT_WINDOW("다른 앱 위에 표시") 권한이 있어야 한다.
+//    없으면 안드로이드 BAL 정책이 두 가지를 모두 막는다 —
+//    폰을 최근에 만지지 않았을 때의 마크다운 전송, 그리고 홈 복귀.
+//    확인: adb shell appops get com.xfl.msgbot SYSTEM_ALERT_WINDOW
+//
 // 문제가 생기면 USE_MARKDOWN 을 false 로 두고 재컴파일하면 전부 평문으로 돌아간다.
 // ─────────────────────────────────────────────────────────────────────────────
 const USE_MARKDOWN = true;
 const MARKDOWN_ROOMS = ["그녀석의 재획교실", "아케인 편안길드", "무친자들의 모임", "앙메톡"];
+// 전송이 끝나기를 기다렸다 홈으로 복귀하는 지연. 짧으면 전송이 끊길 수 있고,
+// 길면 그동안 해당 방의 알림을 놓친다.
+const MARKDOWN_HOME_DELAY_MS = 2500;
+
+/** 카카오톡이 채팅방을 포그라운드로 잡고 있으면 그 방 알림이 뜨지 않는다. 홈으로 되돌린다. */
+function returnToHome() {
+    try {
+        const Intent = Packages.android.content.Intent;
+        const intent = new Intent(Intent.ACTION_MAIN);
+        intent.addCategory(Intent.CATEGORY_HOME);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        App.getContext().startActivity(intent);
+    } catch (e) {
+        Log.e(e);
+    }
+}
 
 function canUseMarkdown(msg) {
     if(!USE_MARKDOWN) return false;
@@ -55,8 +75,12 @@ function replyByFormat(msg, parts) {
         message += useMarkdown ? parts[i].data.resultMarkdown : parts[i].data.resultRaw;
     }
 
-    if(useMarkdown) msg.replyWithMarkdown(message);
-    else msg.reply(message);
+    if(useMarkdown) {
+        msg.replyWithMarkdown(message);
+        App.runDelayed(returnToHome, MARKDOWN_HOME_DELAY_MS);
+    } else {
+        msg.reply(message);
+    }
 }
 const API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api";
 const BASE_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000";
