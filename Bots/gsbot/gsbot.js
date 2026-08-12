@@ -4,6 +4,60 @@ const JSOUP = Packages.org.jsoup.Jsoup;
 const URLDecoder = Packages.java.net.URLDecoder;
 
 const MESSAGE_PREFIX = '/';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 마크다운 출력
+//
+// 카카오톡은 마크다운을 렌더링하지 않는다. 다만 메신저봇의 마크다운 API 는
+// 알림 답장이 아니라 MediaSendActivity 를 거쳐 ACTION_SEND 로 전달되는데,
+// 오픈채팅 그룹방에서는 이 경로로 보낸 내용이 서식대로 표시되는 것을 확인했다.
+// (2026-08-13 실기기 확인. 일반 단체방은 원문 그대로, 오픈채팅 갠톡은 미도착)
+//
+// 오픈채팅 여부를 알려주는 API 필드가 없으므로 방 이름으로 판별한다.
+// 확인되지 않은 방은 평문으로 떨어뜨린다 — 마크다운 전송은 실패해도 true 를
+// 반환해서 감지가 불가능하고, 잘못 켜면 사용자가 아무 응답도 못 받는다.
+//
+// ⚠ 알려진 부작용
+//  - 전송할 때마다 카카오톡이 해당 방을 포그라운드로 연다. 그 상태로 두면
+//    그 방의 알림이 뜨지 않아 봇이 다음 메시지를 놓친다.
+//  - 폰을 최근에 만지지 않았으면 안드로이드 BAL 정책에 막혀 전송이 유실된다.
+//    (SYSTEM_ALERT_WINDOW 권한을 부여하면 해소됨)
+// 문제가 생기면 USE_MARKDOWN 을 false 로 두고 재컴파일하면 전부 평문으로 돌아간다.
+// ─────────────────────────────────────────────────────────────────────────────
+const USE_MARKDOWN = true;
+const MARKDOWN_ROOMS = ["그녀석의 재획교실", "아케인 편안길드", "무친자들의 모임", "앙메톡"];
+
+function canUseMarkdown(msg) {
+    if(!USE_MARKDOWN) return false;
+    if(msg.isDebugRoom) return false;
+
+    for(let i = 0; i < MARKDOWN_ROOMS.length; i++) {
+        if(msg.room === MARKDOWN_ROOMS[i]) return true;
+    }
+    return false;
+}
+
+/**
+ * 서버 응답을 방에 맞는 형식으로 답장한다.
+ * 마크다운을 지원하는 방이고 서버가 resultMarkdown 을 준 경우에만 마크다운으로 보낸다.
+ * @param {object} msg 메시지 객체
+ * @param {Array} parts [{data: 서버응답, prefix: 앞에 붙일 안내문}] 순서대로 이어붙인다
+ */
+function replyByFormat(msg, parts) {
+    const useMarkdown = canUseMarkdown(msg) && parts.every(function(part) {
+        return part.data && part.data.resultMarkdown;
+    });
+
+    let message = "";
+    for(let i = 0; i < parts.length; i++) {
+        if(i > 0) message += useMarkdown ? "\n\n---\n\n" : "\n\n---------------------\n\n";
+        if(parts[i].prefix) message += parts[i].prefix;
+        message += useMarkdown ? parts[i].data.resultMarkdown : parts[i].data.resultRaw;
+    }
+
+    if(useMarkdown) msg.replyWithMarkdown(message);
+    else msg.reply(message);
+}
 const API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api";
 const BASE_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000";
 
@@ -117,14 +171,14 @@ function onMessage(msg) {
             // 통합 히스토리는 경험치 5일 + 레벨 5건만 축약 표시
             let expParams = Object.assign({}, params, { "days": 5 });
             let expData = callApiGet("/history/exp", expParams);
-            messageData += `\n${expData.resultRaw}\n\n---------------------\n`;
 
             let levelParams = Object.assign({}, params, { "limit": 5 });
             let levelData = callApiGet("/history/level", levelParams);
-            messageData += `\n${levelData.resultRaw}`;
 
-            message += messageData;
-            msg.reply(message);
+            replyByFormat(msg, [
+                { "data": expData, "prefix": message + "\n" },
+                { "data": levelData }
+            ]);
         }
 
         if(stringMatchResult(featString, ["ㄱㅎㅊㅎㅅㅌㄹ", "경험치히스토리", "경험치히스토리"])) {
@@ -141,10 +195,7 @@ function onMessage(msg) {
             }
 
             let expData = callApiGet("/history/exp", params);
-            messageData += `\n${expData.resultRaw}`;
-
-            message += messageData;
-            msg.reply(message);
+            replyByFormat(msg, [{ "data": expData, "prefix": message + "\n" }]);
         }
 
         if(stringMatchResult(featString, ["ㄹㅂㅎㅅㅌㄹ", "ㄼㅎㅅㅌㄹ", "레벨히스토리", "레벨히스토리"])) {
@@ -161,10 +212,7 @@ function onMessage(msg) {
             }
 
             let levelData = callApiGet("/history/level", params);
-            messageData += `\n${levelData.resultRaw}`;
-
-            message += messageData;
-            msg.reply(message);
+            replyByFormat(msg, [{ "data": levelData, "prefix": message + "\n" }]);
         }
 
         if(stringMatchResult(featString, ["ㅂㅋ", "본캐"])) {
@@ -845,25 +893,22 @@ function onMessage(msg) {
                 let encodedStart = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
                 let encodedEnd = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
                 let costData = callRootApiGet(`/hexa_cost/${encodedStart}/${encodedEnd}`);
-                message = costData.resultRaw;
+                replyByFormat(msg, [{ "data": costData }]);
             } else if(options.length === 1) {
-                message = getNexonAPINotice();
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
                 let sixData = callRootApiGet(`/info_six/${encodedName}`);
-                message += sixData.resultRaw;
+                replyByFormat(msg, [{ "data": sixData, "prefix": getNexonAPINotice() }]);
             } else if(options.length === 0) {
                 // 캐릭터명 생략 시 지정된 본캐를 조회한다
-                message = getNexonAPINotice();
                 let params = {
                     "chatRoomName": msg.room,
                     "talkProfileName": msg.author.name
                 };
                 let sixData = callRootApiGet("/info_six", params);
-                message += sixData.resultRaw;
+                replyByFormat(msg, [{ "data": sixData, "prefix": getNexonAPINotice() }]);
             } else {
-                message = "명령어 실행 결과: 실패\n\n6차 강화상태 조회는 /6차 [캐릭터명], 강화 비용 계산은 /6차 [시작레벨] [목표레벨] 형태로 입력해 주세요.\n(캐릭터명을 생략하면 지정된 본캐를 조회합니다.)";
+                msg.reply("명령어 실행 결과: 실패\n\n6차 강화상태 조회는 /6차 [캐릭터명], 강화 비용 계산은 /6차 [시작레벨] [목표레벨] 형태로 입력해 주세요.\n(캐릭터명을 생략하면 지정된 본캐를 조회합니다.)");
             }
-            msg.reply(message);
         }
 
         if(stringMatchResult(featString, ["선데이", "썬데이", "ㅅㄷㅇ"])) {
