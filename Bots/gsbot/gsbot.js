@@ -840,13 +840,28 @@ function onMessage(msg) {
         }
 
         if(stringMatchResult(featString, ["솔에르다", "6차", "ㅅㅇㄹㄷ"])) {
-            message = getNexonAPINotice();
-            if(options.length === 1) {
+            if(options.length === 2) {
+                // 레벨 구간 강화 비용 — 넥슨 API 를 쓰지 않으므로 점검 안내를 붙이지 않는다
+                let encodedStart = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+                let encodedEnd = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
+                let costData = callRootApiGet(`/hexa_cost/${encodedStart}/${encodedEnd}`);
+                message = costData.resultRaw;
+            } else if(options.length === 1) {
+                message = getNexonAPINotice();
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
                 let sixData = callRootApiGet(`/info_six/${encodedName}`);
                 message += sixData.resultRaw;
+            } else if(options.length === 0) {
+                // 캐릭터명 생략 시 지정된 본캐를 조회한다
+                message = getNexonAPINotice();
+                let params = {
+                    "chatRoomName": msg.room,
+                    "talkProfileName": msg.author.name
+                };
+                let sixData = callRootApiGet("/info_six", params);
+                message += sixData.resultRaw;
             } else {
-                message = "명령어 실행 결과: 실패\n\n6차 강화상태 조회는 /솔에르다 [캐릭터명] 형태로 입력해 주세요.";
+                message = "명령어 실행 결과: 실패\n\n6차 강화상태 조회는 /6차 [캐릭터명], 강화 비용 계산은 /6차 [시작레벨] [목표레벨] 형태로 입력해 주세요.\n(캐릭터명을 생략하면 지정된 본캐를 조회합니다.)";
             }
             msg.reply(message);
         }
@@ -1158,13 +1173,157 @@ function getNowDateKor() {
 
 const ROOM_LIST = ["06-21", "집사 네 마리", "그녀석의 재획교실", "아케인 편안길드", "무친자들의 모임", "앙메톡"];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 관리자 인증
+//
+// msg.author.name 은 위조 가능하므로 검증에 쓰지 않는다. msg.author.hash(카카오톡
+// 사용자 고유 id)를 대조한다. 디버그룸·소켓으로 주입된 메시지는 hash 가 null 이므로
+// (2026-08-12 실기기 확인) 이 검증만으로 소켓 주입 경로가 함께 차단된다.
+//
+// 등록: 실제 카카오톡에서 "@@관리자등록 [토큰]" 을 1회 전송.
+//       등록 후에는 현재 관리자만 재등록·해제할 수 있다.
+// 저장: Database 는 봇별로 격리된다 (Bots/gsbot/Database/admin.json).
+// ─────────────────────────────────────────────────────────────────────────────
+const ADMIN_NAME = "승엽[EmotionB_SY]";
+const ADMIN_DB_FILE = "admin.json";
+// 등록 토큰은 저장소(공개)에 두지 않고 폰의 Database 에만 둔다.
+// 파일이 없으면 등록 기능 자체가 비활성화된다 (fail-closed).
+const ADMIN_TOKEN_FILE = "admin_token.txt";
+
+function loadAdmin() {
+    try {
+        if(!Database.exists(ADMIN_DB_FILE)) return null;
+
+        const raw = Database.readString(ADMIN_DB_FILE);
+        if(!raw) return null;
+
+        const admin = JSON.parse(raw);
+        return (admin && admin.hash) ? admin : null;
+    } catch (e) {
+        Log.e(e);
+        return null;
+    }
+}
+
+function saveAdmin(admin) {
+    Database.writeString(ADMIN_DB_FILE, JSON.stringify(admin));
+}
+
+/** 등록 토큰. 파일이 없거나 비어 있으면 null (= 등록 비활성) */
+function loadEnrollToken() {
+    try {
+        if(!Database.exists(ADMIN_TOKEN_FILE)) return null;
+
+        const raw = Database.readString(ADMIN_TOKEN_FILE);
+        if(!raw) return null;
+
+        const token = String(raw).trim();
+        return token.length > 0 ? token : null;
+    } catch (e) {
+        Log.e(e);
+        return null;
+    }
+}
+
+/** 고유 id 가 없는 경로(디버그룸·소켓 주입)면 null */
+function getAuthorHash(msg) {
+    const hash = msg.author.hash;
+    if(hash === null || hash === undefined) return null;
+
+    const hashString = String(hash);
+    return hashString.length > 0 ? hashString : null;
+}
+
+/** 단체방에 전체 id 가 노출되지 않도록 가린다 */
+function maskHash(hash) {
+    const hashString = String(hash);
+    if(hashString.length <= 8) return "****";
+    return `${hashString.substring(0, 4)}…${hashString.substring(hashString.length - 4)}`;
+}
+
+function isAdmin(msg) {
+    const admin = loadAdmin();
+    if(admin === null) return false;
+
+    const hash = getAuthorHash(msg);
+    if(hash === null) return false;
+
+    return hash === admin.hash;
+}
+
+function handleAdminEnroll(msg, options) {
+    const hash = getAuthorHash(msg);
+
+    if(hash === null) {
+        msg.reply("고유 id 를 확인할 수 없는 경로입니다. 실제 카카오톡에서 보내주세요.");
+        return;
+    }
+
+    const enrollToken = loadEnrollToken();
+    if(enrollToken === null) {
+        msg.reply("관리자 등록이 비활성화되어 있습니다. 폰의 Database 폴더에 등록 토큰 파일을 먼저 넣어주세요.");
+        return;
+    }
+
+    if(options.length < 1 || options[0] !== enrollToken) {
+        if(loadAdmin() !== null) {
+            bot.send(ADMIN_NAME, `[경고] 관리자 등록 시도 (토큰 불일치)\n${getNowDateKor()}\n${msg.room} / ${msg.author.name}`);
+        }
+        return;
+    }
+
+    const existing = loadAdmin();
+    if(existing !== null && existing.hash !== hash) {
+        bot.send(ADMIN_NAME, `[경고] 다른 계정의 관리자 등록 시도\n${getNowDateKor()}\n${msg.room} / ${msg.author.name}`);
+        return;
+    }
+
+    saveAdmin({
+        "hash": hash,
+        "name": msg.author.name,
+        "room": msg.room,
+        "registeredAt": getNowDateKor()
+    });
+
+    let message = `관리자 등록 완료\n계정: ${msg.author.name}\nid: ${maskHash(hash)}`;
+    if(msg.isGroupChat) {
+        message += "\n\n※ 단체방입니다. 토큰이 노출되지 않도록 등록 명령 메시지를 삭제하세요.";
+    }
+    msg.reply(message);
+}
+
 function onCommand(msg) {
     try {
         const command = msg.content.substring("@@".length).trim();
         const featString = command.split(/\s+/)[0];
         const options = command.split(/\s+/).slice(1);
 
+        // 등록은 인증 이전에 처리한다
+        if(featString === "관리자등록") {
+            handleAdminEnroll(msg, options);
+            return;
+        }
+
+        if(!isAdmin(msg)) {
+            if(loadAdmin() === null) {
+                msg.reply("관리자가 등록되지 않았습니다. 실제 카카오톡에서 \"@@관리자등록 [토큰]\" 으로 먼저 등록하세요.");
+            } else {
+                bot.send(ADMIN_NAME, `[차단] 관리자 명령 시도\n${getNowDateKor()}\n${msg.room} / ${msg.author.name}\n${msg.content}`);
+            }
+            return;
+        }
+
         let message = "";
+
+        if(featString === "관리자확인") {
+            const admin = loadAdmin();
+            msg.reply(`등록 계정: ${admin.name}\nid: ${maskHash(admin.hash)}\n등록 시각: ${admin.registeredAt}\n등록 방: ${admin.room}`);
+        }
+
+        if(featString === "관리자해제") {
+            Database.writeString(ADMIN_DB_FILE, "");
+            msg.reply("관리자 등록을 해제했습니다. 다시 등록하려면 \"@@관리자등록 [토큰]\" 을 사용하세요.");
+        }
 
         if(featString === "공지전송") {
             let failure = [];
@@ -1178,7 +1337,7 @@ function onCommand(msg) {
             if(failure.length > 0) {
                 message += `아래 톡방은 전송이 불가능합니다:\n${failure.join(" / ")}`;
             }
-            bot.send("승엽[EmotionB_SY]", message);
+            bot.send(ADMIN_NAME, message);
         }
 
         if(featString === "테스트") {

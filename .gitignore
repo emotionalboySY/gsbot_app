@@ -3,3 +3,7 @@
 FATAL_ERROR_LOG.log
 GLOBAL_LOG.json
 log.json
+
+# 봇 실행 중 생성되는 로컬 데이터 (관리자 해시·등록 토큰 등 비밀 포함)
+Database/
+DebugRoom/
