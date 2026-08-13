@@ -1051,11 +1051,12 @@ const COMMANDS = [
     },
     {
         "aliases": ["건의","ㄱㅇ"],
-        "handler": function* (msg, options) {
+        "handler": function* (msg, options, rawText) {
             if(options.length < 1) {
                 msg.reply("명령어 실행 결과: 실패\n\n건의 내용을 함께 입력해 주세요.\n\n/건의 [건의내용]");
             } else {
-                let content = options.join(" ");
+                // 여러 줄로 쓴 건의를 한 줄로 뭉개지 않는다
+                let content = rawText;
                 let dataObj = {
                     "chatRoomName": msg.room,
                     "talkProfileName": msg.author.name,
@@ -1185,11 +1186,21 @@ function onMessage(msg) {
 
     if(!msg.content.startsWith(MESSAGE_PREFIX)) return;
 
-    const parts = msg.content.substring(MESSAGE_PREFIX.length).trim().split(/\s+/);
+    const command = msg.content.substring(MESSAGE_PREFIX.length).trim();
+    const parts = command.split(/\s+/);
     const handler = COMMAND_TABLE[parts[0]];
     if(!handler) return;
 
-    runCommand(msg, handler, parts.slice(1));
+    runCommand(msg, handler, parts.slice(1), rawArgument(command, parts[0]));
+}
+
+/**
+ * 명령어 이름 뒤의 원문. options 는 /\s+/ 로 쪼갠 것이라 줄바꿈이 사라지고
+ * 연속된 공백도 하나로 뭉개진다. 건의·공지처럼 사용자가 쓴 모양 그대로
+ * 옮겨야 하는 값에는 options.join(" ") 대신 이쪽을 쓴다.
+ */
+function rawArgument(command, featString) {
+    return command.substring(featString.length).replace(/^\s+/, "");
 }
 
 /**
@@ -1197,8 +1208,8 @@ function onMessage(msg) {
  * 오류는 제너레이터 안으로 되던져 핸들러의 try/catch 가 먼저 잡을 기회를 주고,
  * 아무도 안 잡으면 사용자 안내로 바꾼다.
  */
-function runCommand(msg, handler, options) {
-    const iterator = handler(msg, options);
+function runCommand(msg, handler, options, rawText) {
+    const iterator = handler(msg, options, rawText);
 
     function step(error, value) {
         let state;
@@ -1569,6 +1580,7 @@ function onCommand(msg) {
         const command = msg.content.substring("@@".length).trim();
         const featString = command.split(/\s+/)[0];
         const options = command.split(/\s+/).slice(1);
+        const rawText = rawArgument(command, featString);
 
         // 등록은 인증 이전에 처리한다
         if(featString === "관리자등록") {
@@ -1612,12 +1624,19 @@ function onCommand(msg) {
         }
 
         if(featString === "공지전송") {
+            // 공지는 쓴 그대로 나가야 한다. options 는 공백으로 쪼갠 것이라
+            // 줄바꿈이 사라진다 — 원문을 쓴다.
+            if(rawText.length === 0) {
+                msg.reply("보낼 공지 내용이 없습니다.\n\n@@공지전송 [내용]");
+                return;
+            }
+
             let failure = [];
             for(let roomName of ROOM_LIST) {
                 if(!bot.canReply(roomName)) {
                     failure.push(roomName);
                 }
-                bot.send(roomName, options.join(" "));
+                bot.send(roomName, rawText);
             }
             message += "공지 전송 완료.\n";
             if(failure.length > 0) {
