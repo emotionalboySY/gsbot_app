@@ -49,13 +49,15 @@ const PRELUDE = `(function (seed, fixedNow) {
         return s / 4294967296;
     };
 
+    let clock = fixedNow;
     const RealDate = Date;
     globalThis.Date = new Proxy(RealDate, {
         construct(target, args) {
-            return args.length ? new target(...args) : new target(fixedNow);
+            return args.length ? new target(...args) : new target(clock);
         },
     });
-    globalThis.Date.now = function () { return fixedNow; };
+    globalThis.Date.now = function () { return clock; };
+    globalThis.__advanceClock = function (ms) { clock += ms; return clock; };
 })`;
 
 /**
@@ -64,6 +66,7 @@ const PRELUDE = `(function (seed, fixedNow) {
  *   - seed: Math.random 시드 (기본 20260813)
  *   - now: 고정 시각 ms (기본 2026-08-13 12:00 KST)
  *   - source: 실행할 소스 문자열 (기본 Bots/gsbot/gsbot.js)
+ *   - database: Database 초기 내용 { 파일명: 문자열 }
  *   - adminHash: Database 의 admin.json 에 심을 hash (관리자 명령 검증용)
  *   - adminToken: admin_token.txt 에 심을 토큰
  */
@@ -76,10 +79,14 @@ function loadBot(opts) {
         sent: [],         // bot.send(room, text)
         logs: [],
         delayed: [],      // App.runDelayed 로 예약된 것
+        background: [],   // App.runOnBackgroundThread 로 넘긴 것
+        files: {},        // FileStream 이 쓴 내용 (메모리)
+        timers: {},       // 등록된 setInterval/setTimeout — 자동으로 돌지 않는다
+        timerSeq: 0,
         listeners: {},
     };
 
-    const db = Object.assign({}, opts.files || {});
+    const db = Object.assign({}, opts.database || {});
     if (opts.adminHash) {
         db['admin.json'] = JSON.stringify({
             hash: opts.adminHash, name: '관리자', room: '테스트방', registeredAt: '2026-01-01',
@@ -119,7 +126,10 @@ function loadBot(opts) {
 
     // ── 전역 ────────────────────────────────────────────────────────────────
     const bot = {
-        addListener(event, fn) { state.listeners[event] = fn; },
+        addListener(event, fn) {
+            if (!state.listeners[event]) state.listeners[event] = [];
+            state.listeners[event].push(fn);
+        },
         send(room, text) { state.sent.push({ room, text: String(text) }); return true; },
         canReply() { return true; },
         setCommandPrefix() {},
@@ -128,6 +138,9 @@ function loadBot(opts) {
     const Event = {
         MESSAGE: 'message',
         COMMAND: 'command',
+        START_COMPILE: 'startCompile',
+        TICK: 'tick',
+        NOTIFICATION_REMOVED: 'notificationRemoved',
         NOTIFICATION_POSTED: 'notificationPosted',
         Activity: {
             CREATE: 'a.create', START: 'a.start', RESUME: 'a.resume', PAUSE: 'a.pause',
@@ -154,9 +167,37 @@ function loadBot(opts) {
         App: {
             getContext: () => ({ startActivity() {} }),
             runDelayed(fn, ms) { state.delayed.push({ fn, ms }); },
-            runOnBackgroundThread(fn) { fn(); },
+            runOnBackgroundThread(fn) { state.background.push(fn); fn(); },
+            runOnUiThread(fn) { fn(); },
             isMainThread: () => true,
         },
+        // 파일은 메모리에만 둔다. 실제 디스크를 건드리면 검증이 기기 상태에 얽힌다.
+        FileStream: {
+            read: (f) => (Object.prototype.hasOwnProperty.call(state.files, f) ? state.files[f] : null),
+            write: (f, v) => { state.files[f] = String(v); return true; },
+            append: (f, v) => { state.files[f] = (state.files[f] || '') + String(v); return true; },
+            exists: (f) => Object.prototype.hasOwnProperty.call(state.files, f),
+            remove: (f) => { delete state.files[f]; return true; },
+            create: (f) => { state.files[f] = state.files[f] || ''; return true; },
+            createDir: (f) => { state.files[f] = state.files[f] || ''; return true; },
+            getSdcardPath: () => '/sdcard',
+        },
+        Device: Object.assign({
+            getBatteryLevel: () => 79,
+            isCharging: () => true,
+            isPowerSaveMode: () => false,
+            isScreenOn: () => true,
+            getFreeMemory: () => 48709200,
+            getTotalMemory: () => 90843632,
+            getPhoneModel: () => 'b0q',
+            getAndroidVersionName: () => '16',
+        }, opts.device || {}),
+        // 타이머는 자동으로 돌지 않는다. 등록만 받아 두고 테스트가 직접 부른다 —
+        // 그래야 "60초 뒤" 를 기다리지 않고 sweep 을 검증할 수 있다.
+        setInterval(fn, ms) { const id = ++state.timerSeq; state.timers[id] = { fn, ms, kind: 'interval' }; return id; },
+        setTimeout(fn, ms) { const id = ++state.timerSeq; state.timers[id] = { fn, ms, kind: 'timeout' }; return id; },
+        clearInterval(id) { delete state.timers[id]; },
+        clearTimeout(id) { delete state.timers[id]; },
         Packages: {
             org: { jsoup: { Jsoup: { connect: jsoupConnect } } },
             java: {
@@ -212,10 +253,13 @@ function loadBot(opts) {
         full.author = Object.assign({ name: '테스터', hash: null }, (msg && msg.author) || {});
 
         let error = null;
-        try {
-            state.listeners[event || Event.MESSAGE](full);
-        } catch (e) {
-            error = e;
+        const handlers = state.listeners[event || Event.MESSAGE] || [];
+        for (const handler of handlers) {
+            try {
+                handler(full);
+            } catch (e) {
+                error = e;
+            }
         }
         return {
             error,
@@ -225,7 +269,29 @@ function loadBot(opts) {
         };
     }
 
-    return { send, state, db, sandbox, context };
+    /** 임의 이벤트를 임의 인자로 발생시킨다 (NOTIFICATION_POSTED·START_COMPILE 등). */
+    function emit(event) {
+        const args = Array.prototype.slice.call(arguments, 1);
+        const handlers = state.listeners[event] || [];
+        const errors = [];
+        for (const handler of handlers) {
+            try { handler.apply(null, args); } catch (e) { errors.push(e); }
+        }
+        return errors;
+    }
+
+    /** 등록된 타이머 중 kind 가 맞는 것을 한 번씩 돌린다. */
+    function fireTimers(kind) {
+        for (const id in state.timers) {
+            const timer = state.timers[id];
+            if (!kind || timer.kind === kind) timer.fn();
+        }
+    }
+
+    /** 고정 시각을 앞으로 감는다. 유예·쿨다운처럼 시간이 얽힌 로직 검증용. */
+    function advanceTime(ms) { return sandbox.__advanceClock(ms); }
+
+    return { send, emit, fireTimers, advanceTime, state, db, sandbox, context, Event };
 }
 
 module.exports = { loadBot, defaultResponse, BOT_SOURCE };
