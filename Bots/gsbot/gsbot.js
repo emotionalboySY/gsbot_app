@@ -725,7 +725,7 @@ function onMessage(msg) {
             msg.reply(message);
         }
 
-        if(stringMatchResult(featString, ["연마석", "연마", "ㅇㅁㅅ", "ㅇㅁ"])) {
+        if(stringMatchResult(featString, ["연마석", "ㅇㅁㅅ"])) {
             if(options.length !== 3) {
                 msg.reply("명령어 실행 결과: 실패\n\n/연마석 [반지레벨] [연마석개수] [시도횟수]\n[반지레벨]: 4(4→5연마) 또는 5(5→6연마)\n[연마석개수]: 4레벨 0~10개 / 5레벨 0~20개\n[시도횟수]: 1 ~ 20회");
             } else {
