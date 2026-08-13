@@ -61,7 +61,11 @@ function canUseMarkdown(msg) {
  * 서버 응답을 방에 맞는 형식으로 답장한다.
  * 마크다운을 지원하는 방이고 서버가 resultMarkdown 을 준 경우에만 마크다운으로 보낸다.
  * @param {object} msg 메시지 객체
- * @param {Array} parts [{data: 서버응답, prefix: 앞에 붙일 안내문}] 순서대로 이어붙인다
+ * @param {Array} parts 순서대로 이어붙일 항목들
+ *   - data: 서버 응답
+ *   - prefix: 양쪽 형식 모두에 붙일 안내문
+ *   - plainPrefix: 평문일 때만 붙일 안내문
+ *   - markdownPrefix: 마크다운일 때만 붙일 안내문
  */
 function replyByFormat(msg, parts) {
     const useMarkdown = canUseMarkdown(msg) && parts.every(function(part) {
@@ -70,8 +74,11 @@ function replyByFormat(msg, parts) {
 
     let message = "";
     for(let i = 0; i < parts.length; i++) {
-        if(i > 0) message += useMarkdown ? "\n\n---\n\n" : "\n\n---------------------\n\n";
+        // 마크다운은 소제목(###)이 구분 역할을 하므로 구분선 없이 빈 줄만 둔다
+        if(i > 0) message += useMarkdown ? "\n\n" : "\n\n---------------------\n\n";
         if(parts[i].prefix) message += parts[i].prefix;
+        if(useMarkdown && parts[i].markdownPrefix) message += parts[i].markdownPrefix;
+        if(!useMarkdown && parts[i].plainPrefix) message += parts[i].plainPrefix;
         message += useMarkdown ? parts[i].data.resultMarkdown : parts[i].data.resultRaw;
     }
 
@@ -192,15 +199,25 @@ function onMessage(msg) {
                 params.characterName = options[0];
             }
 
-            // 통합 히스토리는 경험치 5일 + 레벨 5건만 축약 표시
-            let expParams = Object.assign({}, params, { "days": 5 });
+            // 통합 히스토리는 경험치 5일 + 레벨 5건만 축약 표시.
+            // section=1 이면 서버가 "OO의 경험치 히스토리" 대신 "경험치" 소제목으로 준다.
+            // 합본에서 캐릭터명이 두 번 반복되는 어색함을 없애고, 제목은 여기서 한 번만 붙인다.
+            let expParams = Object.assign({}, params, { "days": 5, "section": 1 });
             let expData = callApiGet("/history/exp", expParams);
 
-            let levelParams = Object.assign({}, params, { "limit": 5 });
+            let levelParams = Object.assign({}, params, { "limit": 5, "section": 1 });
             let levelData = callApiGet("/history/level", levelParams);
 
+            // 본캐 조회일 땐 봇이 캐릭터명을 모르므로 서버가 돌려준 값을 쓴다
+            let historyName = expData.characterName || levelData.characterName || "";
+
             replyByFormat(msg, [
-                { "data": expData, "prefix": message + "\n" },
+                {
+                    "data": expData,
+                    "prefix": message + "\n",
+                    "markdownPrefix": historyName ? `## ${historyName}의 히스토리\n\n` : "",
+                    "plainPrefix": historyName ? `[${historyName}의 히스토리]\n\n` : ""
+                },
                 { "data": levelData }
             ]);
         }
