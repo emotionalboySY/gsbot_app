@@ -540,7 +540,7 @@ const API_TIMEOUT_MS = 10000;
 const COMMANDS = [
     {
         "aliases": ["타일런트시뮬","타일런트","ㅌㅇㄾㅅㅁ","ㅌㅇㄾ","ㅌㅇㄹㅌ","ㅌㅇㄹㅌㅅㅁ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
 
             if(options.length === 3) {
@@ -551,7 +551,7 @@ const COMMANDS = [
                     "isStarCatch": options[2]
                 };
 
-                let superialData = callApiGet("/enforcements/superial", params);
+                let superialData = yield apiGet("/enforcements/superial", params);
                 message += superialData.resultRaw;
 
             } else {
@@ -565,7 +565,7 @@ const COMMANDS = [
     },
     {
         "aliases": ["스타포스시뮬","ㅅㅌㅍㅅㅅㅁ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
 
             if(options.length === 6) {
@@ -579,7 +579,7 @@ const COMMANDS = [
                     "isBreakShield": options[5]
                 };
 
-                let starForceData = callApiGet("/enforcements/starForce", params);
+                let starForceData = yield apiGet("/enforcements/starForce", params);
                 message += starForceData.resultRaw;
 
             } else {
@@ -593,7 +593,7 @@ const COMMANDS = [
     },
     {
         "aliases": ["ㅎㅅ","히스토리","히스"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             let messageData = "";
 
@@ -611,10 +611,10 @@ const COMMANDS = [
             // section=1 이면 서버가 "OO의 경험치 히스토리" 대신 "경험치" 소제목으로 준다.
             // 합본에서 캐릭터명이 두 번 반복되는 어색함을 없애고, 제목은 여기서 한 번만 붙인다.
             let expParams = Object.assign({}, params, { "days": 5, "section": 1 });
-            let expData = callApiGet("/history/exp", expParams);
+            let expData = yield apiGet("/history/exp", expParams);
 
             let levelParams = Object.assign({}, params, { "limit": 5, "section": 1 });
-            let levelData = callApiGet("/history/level", levelParams);
+            let levelData = yield apiGet("/history/level", levelParams);
 
             // 본캐 조회일 땐 봇이 캐릭터명을 모르므로 서버가 돌려준 값을 쓴다
             let historyTitle = expData.title || levelData.title || "";
@@ -632,7 +632,7 @@ const COMMANDS = [
     },
     {
         "aliases": ["ㄱㅎㅊㅎㅅㅌㄹ","경험치히스토리"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             let messageData = "";
 
@@ -645,13 +645,13 @@ const COMMANDS = [
                 params.characterName = options[0];
             }
 
-            let expData = callApiGet("/history/exp", params);
+            let expData = yield apiGet("/history/exp", params);
             replyByFormat(msg, [{ "data": expData, "prefix": message }]);
         }
     },
     {
         "aliases": ["ㄹㅂㅎㅅㅌㄹ","ㄼㅎㅅㅌㄹ","레벨히스토리"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             let messageData = "";
 
@@ -665,13 +665,13 @@ const COMMANDS = [
             }
 
             // 최근 10건만 (서버 기본값에 기대지 않고 명시한다)
-            let levelData = callApiGet("/history/level", Object.assign({}, params, { "limit": 10 }));
+            let levelData = yield apiGet("/history/level", Object.assign({}, params, { "limit": 10 }));
             replyByFormat(msg, [{ "data": levelData, "prefix": message }]);
         }
     },
     {
         "aliases": ["ㅂㅋ","본캐"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
             let messageData = "";
 
@@ -682,7 +682,7 @@ const COMMANDS = [
                     "chatRoomName": msg.room,
                     "talkProfileName": msg.author.name
                 };
-                mainCharacterData = callApiGet("/main_character/get", params);
+                mainCharacterData = yield apiGet("/main_character/get", params);
                 messageData += mainCharacterData.resultRaw;
             } else if(options.length === 1) {
                 let dataObj = {
@@ -702,7 +702,7 @@ const COMMANDS = [
     },
     {
         "aliases": ["ㅁㅁㅈ","뭐먹지"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
             const randomFoodIndex = Math.floor(Math.random() * FOOD_LIST.length);
 
@@ -712,7 +712,7 @@ const COMMANDS = [
     },
     {
         "aliases": ["ㅁㅎㅈ","뭐하지"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
             const randomActIndex = Math.floor(Math.random() * ACTIVITY_LIST.length);
 
@@ -722,11 +722,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["연마석","ㅇㅁㅅ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             if(options.length !== 3) {
                 msg.reply("명령어 실행 결과: 실패\n\n/연마석 [반지레벨] [연마석개수] [시도횟수]\n[반지레벨]: 4(4→5연마) 또는 5(5→6연마)\n[연마석개수]: 4레벨 0~10개 / 5레벨 0~20개\n[시도횟수]: 1 ~ 20회");
             } else {
-                let polishData = callApiGet("/probability/ringPolish", {
+                let polishData = yield apiGet("/probability/ringPolish", {
                     "level": options[0],
                     "stones": options[1],
                     "attempts": options[2]
@@ -737,10 +737,10 @@ const COMMANDS = [
     },
     {
         "aliases": ["이벤트","ㅇㅂㅌ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
 
-            let eventData = callApiGet("/homepage/event");
+            let eventData = yield apiGet("/homepage/event");
             message += eventData.resultRaw;
 
             msg.reply(message);
@@ -748,12 +748,12 @@ const COMMANDS = [
     },
     {
         "aliases": ["성향","ㅅㅎ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
 
             if(options.length === 1) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let propensityData = callRootApiGet(`/propensity/${encodedName}`);
+                let propensityData = yield rootApiGet(`/propensity/${encodedName}`);
                 message += propensityData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n성향 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -764,12 +764,12 @@ const COMMANDS = [
     },
     {
         "aliases": ["보스","ㅂㅅ","ㅄ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
             if(options.length === 2) {
                 let encodedDiff = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
-                let bossData = callRootApiGet(`/boss/${encodedDiff}/${encodedName}`);
+                let bossData = yield rootApiGet(`/boss/${encodedDiff}/${encodedName}`);
                 message += decodeURIComponent(bossData.result);
             } else {
                 message = "명령어 실행 결과: 실패\n\n보스 명령어는 아래의 규칙에 따라 작성하셔야 합니다.\n\n<보스 명령어 사용 방법>\n\"/보스(ㅄ or ㅂㅅ) [난이도] [보스명]\"\n\n[난이도]: 카오스 / 하드 / 노말 / 노멀 / 이지 / 익스트림 / 익스\n[보스명]: 띄어쓰기를 포함하지 않은 보스명(ex. 가디언 엔젤 슬라임 -> 가디언엔젤슬라임 or 가엔슬)";
@@ -779,11 +779,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["심볼","ㅅㅂ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
             if(options.length >= 1 && options[0] === "1") {
                 if(options.length === 3) {
-                    let symbolData = callRootApiGet(`/symbol1/${options[1]}/${options[2]}`);
+                    let symbolData = yield rootApiGet(`/symbol1/${options[1]}/${options[2]}`);
                     message += symbolData.resultRaw;
                 } else {
                     message = "명령어 실행 결과: 실패\n\n심볼 1 명령어는 /심볼 1 [시작레벨] [목표레벨] 형태로 입력해 주세요.";
@@ -791,7 +791,7 @@ const COMMANDS = [
             } else if(options.length >= 1 && options[0] === "2") {
                 if(options.length === 5) {
                     let encodedType = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
-                    let symbolData = callRootApiGet(`/symbol2/${encodedType}/${options[2]}/${options[3]}/${options[4]}`);
+                    let symbolData = yield rootApiGet(`/symbol2/${encodedType}/${options[2]}/${options[3]}/${options[4]}`);
                     message += symbolData.resultRaw;
                 } else {
                     message = "명령어 실행 결과: 실패\n\n심볼 2 명령어는 /심볼 2 [심볼종류] [현재레벨] [현재수치] [목표레벨] 형태로 입력해 주세요.";
@@ -804,19 +804,19 @@ const COMMANDS = [
     },
     {
         "aliases": ["캐시샵","ㅋㅅㅅ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
-            let cashShopData = callApiGet("/homepage/cashShop");
+            let cashShopData = yield apiGet("/homepage/cashShop");
             message += cashShopData.resultRaw;
             msg.reply(message);
         }
     },
     {
         "aliases": ["익성비","ㅇㅅㅂ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
             if(options.length === 2) {
-                let extremeData = callRootApiGet(`/extreme/${options[0]}/${options[1]}`);
+                let extremeData = yield rootApiGet(`/extreme/${options[0]}/${options[1]}`);
                 message += extremeData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n익성비 시뮬레이션은 총 2개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -826,11 +826,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["유니온","ㅇㄴㅇ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 1) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let unionData = callRootApiGet(`/union/${encodedName}`);
+                let unionData = yield rootApiGet(`/union/${encodedName}`);
                 message += unionData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n유니온 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -840,25 +840,25 @@ const COMMANDS = [
     },
     {
         "aliases": ["행운의채널","채널","ㅎㅇㅇㅊㄴ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
-            let channelData = callRootApiGet("/randomChannel");
+            let channelData = yield rootApiGet("/randomChannel");
             message += channelData.resultRaw;
             msg.reply(message);
         }
     },
     {
         "aliases": ["솔에르다","6차","ㅅㅇㄹㄷ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             if(options.length === 2) {
                 // 레벨 구간 강화 비용 — 넥슨 API 를 쓰지 않으므로 점검 안내를 붙이지 않는다
                 let encodedStart = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
                 let encodedEnd = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
-                let costData = callRootApiGet(`/hexa_cost/${encodedStart}/${encodedEnd}`);
+                let costData = yield rootApiGet(`/hexa_cost/${encodedStart}/${encodedEnd}`);
                 replyByFormat(msg, [{ "data": costData }]);
             } else if(options.length === 1) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let sixData = callRootApiGet(`/info_six/${encodedName}`);
+                let sixData = yield rootApiGet(`/info_six/${encodedName}`);
                 replyByFormat(msg, [{ "data": sixData, "prefix": getNexonAPINotice() }]);
             } else if(options.length === 0) {
                 // 캐릭터명 생략 시 지정된 본캐를 조회한다
@@ -866,7 +866,7 @@ const COMMANDS = [
                     "chatRoomName": msg.room,
                     "talkProfileName": msg.author.name
                 };
-                let sixData = callRootApiGet("/info_six", params);
+                let sixData = yield rootApiGet("/info_six", params);
                 replyByFormat(msg, [{ "data": sixData, "prefix": getNexonAPINotice() }]);
             } else {
                 msg.reply("명령어 실행 결과: 실패\n\n6차 강화상태 조회는 /6차 [캐릭터명], 강화 비용 계산은 /6차 [시작레벨] [목표레벨] 형태로 입력해 주세요.\n(캐릭터명을 생략하면 지정된 본캐를 조회합니다.)");
@@ -875,20 +875,20 @@ const COMMANDS = [
     },
     {
         "aliases": ["선데이","썬데이","ㅅㄷㅇ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
-            let sundayData = callRootApiGet("/sunday");
+            let sundayData = yield rootApiGet("/sunday");
             message += sundayData.resultRaw;
             msg.reply(message);
         }
     },
     {
         "aliases": ["하이퍼스탯","ㅎㅇㅍㅅㅌ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 2) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let hyperStatData = callRootApiGet(`/hyperStat/${encodedName}/${options[1]}`);
+                let hyperStatData = yield rootApiGet(`/hyperStat/${encodedName}/${options[1]}`);
                 message += hyperStatData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n하이퍼스탯 조회는 총 2개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -898,11 +898,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["어빌리티","어빌","ㅇㅂㄹㅌ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 1) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let abilityData = callRootApiGet(`/ability/${encodedName}`);
+                let abilityData = yield rootApiGet(`/ability/${encodedName}`);
                 message += abilityData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n어빌리티 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -912,11 +912,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["인기도","ㅇㄱㄷ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 1) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let popularityData = callRootApiGet(`/popularity/${encodedName}`);
+                let popularityData = yield rootApiGet(`/popularity/${encodedName}`);
                 message += popularityData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n인기도 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -926,11 +926,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["전투력","ㅈㅌㄹ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 1) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let fightingPowerData = callRootApiGet(`/fightingPower/${encodedName}`);
+                let fightingPowerData = yield rootApiGet(`/fightingPower/${encodedName}`);
                 message += fightingPowerData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n전투력 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -940,11 +940,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["헥사스탯","ㅎㅅㅅㅌ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 1) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let hexaStatData = callRootApiGet(`/hexaStat/${encodedName}`);
+                let hexaStatData = yield rootApiGet(`/hexaStat/${encodedName}`);
                 message += hexaStatData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n헥사스탯 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -954,11 +954,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["정보","ㅈㅂ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 1) {
                 let encodedName = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-                let infoData = callRootApiGet(`/info/${encodedName}`);
+                let infoData = yield rootApiGet(`/info/${encodedName}`);
                 message += infoData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n정보 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -968,11 +968,11 @@ const COMMANDS = [
     },
     {
         "aliases": ["랭킹","ㄹㅋ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 1) {
                 let params = { "characterName": options[0] };
-                let rankingData = callApiGet("/ranking/character", params);
+                let rankingData = yield apiGet("/ranking/character", params);
                 message += rankingData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n랭킹 조회는 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -982,28 +982,28 @@ const COMMANDS = [
     },
     {
         "aliases": ["공지","ㄱㅈ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
-            let noticeData = callApiGet("/homepage/notice");
+            let noticeData = yield apiGet("/homepage/notice");
             message += noticeData.resultRaw;
             msg.reply(message);
         }
     },
     {
         "aliases": ["업데이트","ㅇㄷㅇㅌ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
-            let updateData = callApiGet("/homepage/update");
+            let updateData = yield apiGet("/homepage/update");
             message += updateData.resultRaw;
             msg.reply(message);
         }
     },
     {
         "aliases": ["exp"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = "";
             if(options.length === 4) {
-                let expCouponData = callRootApiGet(`/exp_coupon/${options[0]}/${options[1]}/${options[2]}/${options[3]}`);
+                let expCouponData = yield rootApiGet(`/exp_coupon/${options[0]}/${options[1]}/${options[2]}/${options[3]}`);
                 message += expCouponData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\nEXP쿠폰 계산은 총 4개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -1013,7 +1013,7 @@ const COMMANDS = [
     },
     {
         "aliases": ["길드랭킹","ㄱㄷㄹㅋ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             let message = getNexonAPINotice();
             if(options.length === 2) {
                 let params = {
@@ -1022,7 +1022,7 @@ const COMMANDS = [
                 };
                 let encodedWorld = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
                 let encodedGuild = Packages.java.net.URLEncoder.encode(String(options[1]), "UTF-8");
-                let guildData = callApiGet(`/ranking/guild/${encodedWorld}/${encodedGuild}`);
+                let guildData = yield apiGet(`/ranking/guild/${encodedWorld}/${encodedGuild}`);
                 message += guildData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n길드랭킹 조회는 총 2개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
@@ -1032,7 +1032,7 @@ const COMMANDS = [
     },
     {
         "aliases": ["주문서","ㅈㅁㅅ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             // 인자 없음 → 주문서 목록 / [주문서] → 1회 / [주문서] [횟수] → 횟수만큼
             let params = {};
             if(options.length >= 1) {
@@ -1045,13 +1045,13 @@ const COMMANDS = [
                 }
             }
 
-            let orderSheetData = callApiGet("/probability/orderSheet", options.length >= 1 ? params : null);
+            let orderSheetData = yield apiGet("/probability/orderSheet", options.length >= 1 ? params : null);
             replyByFormat(msg, [{ "data": orderSheetData }]);
         }
     },
     {
         "aliases": ["건의","ㄱㅇ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             if(options.length < 1) {
                 msg.reply("명령어 실행 결과: 실패\n\n건의 내용을 함께 입력해 주세요.\n\n/건의 [건의내용]");
             } else {
@@ -1075,10 +1075,10 @@ const COMMANDS = [
     },
     {
         "aliases": ["도움말","명령어","ㄷㅇㅁ","ㅁㄹㅇ"],
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             // 인자를 주면 분류명 또는 명령어명으로 좁혀서 조회한다
             let helpParams = options.length > 0 ? { "query": options.join(" ") } : null;
-            let helpData = callApiGet("/extra/help", helpParams);
+            let helpData = yield apiGet("/extra/help", helpParams);
 
             replyByFormat(msg, [{
                 "data": helpData,
@@ -1095,13 +1095,13 @@ for(let i = 0; i < SEED_RING_BOXES.length; i++) COMMANDS.push(seedRingCommand(SE
 function cashBoxCommand(box) {
     return {
         "aliases": box.aliases,
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             if(options.length !== 1) {
                 msg.reply(`명령어 실행 결과: 실패\n\n${box.name} 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.`);
                 return;
             }
 
-            let cashData = callApiGet(`/probability/${box.key}`, { "iteration": options[0] });
+            let cashData = yield apiGet(`/probability/${box.key}`, { "iteration": options[0] });
             replyByFormat(msg, [{ "data": cashData }]);
         }
     };
@@ -1110,14 +1110,14 @@ function cashBoxCommand(box) {
 function seedRingCommand(box) {
     return {
         "aliases": box.aliases,
-        "handler": function (msg, options) {
+        "handler": function* (msg, options) {
             if(options.length !== 1) {
                 msg.reply(`명령어 실행 결과: 실패\n\n${box.name} 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.`);
                 return;
             }
 
             let encodedCount = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
-            let seedRingData = callRootApiGet(`/seedRing/${box.mode}/${encodedCount}`);
+            let seedRingData = yield rootApiGet(`/seedRing/${box.mode}/${encodedCount}`);
             replyByFormat(msg, [{ "data": seedRingData }]);
         }
     };
@@ -1185,13 +1185,50 @@ function onMessage(msg) {
 
     if(!msg.content.startsWith(MESSAGE_PREFIX)) return;
 
-    try {
-        const parts = msg.content.substring(MESSAGE_PREFIX.length).trim().split(/\s+/);
-        const handler = COMMAND_TABLE[parts[0]];
-        if(!handler) return;
+    const parts = msg.content.substring(MESSAGE_PREFIX.length).trim().split(/\s+/);
+    const handler = COMMAND_TABLE[parts[0]];
+    if(!handler) return;
 
-        handler(msg, parts.slice(1));
-    } catch (err) {
+    runCommand(msg, handler, parts.slice(1));
+}
+
+/**
+ * 제너레이터 핸들러를 끝까지 돌린다. yield 한 작업이 끝나면 그 자리에서 이어 간다.
+ * 오류는 제너레이터 안으로 되던져 핸들러의 try/catch 가 먼저 잡을 기회를 주고,
+ * 아무도 안 잡으면 사용자 안내로 바꾼다.
+ */
+function runCommand(msg, handler, options) {
+    const iterator = handler(msg, options);
+
+    function step(error, value) {
+        let state;
+        try {
+            state = error ? iterator.throw(error) : iterator.next(value);
+        } catch (err) {
+            replyCommandError(msg, err);
+            return;
+        }
+        if(state.done) return;
+
+        let resumed = false;
+        try {
+            state.value(function (nextError, nextValue) {
+                if(resumed) return;      // 실수로 두 번 불러도 두 번 진행하지 않게
+                resumed = true;
+                step(nextError, nextValue);
+            });
+        } catch (err) {
+            // 이미 이어서 돌았다면 아래 단계에서 난 오류다. 거기서 이미 처리했다.
+            if(resumed) { Log.e(err); return; }
+            replyCommandError(msg, err);
+        }
+    }
+
+    step(null);
+}
+
+function replyCommandError(msg, err) {
+    try {
         // 서버에 닿지 못한 것과 코드 오류는 사용자가 할 일이 다르다.
         // 배포 직후 PM2 reload 창에서 자주 나오는데, 같은 문구로 안내하면
         // 코드 문제로 오인하고 개발자에게도 같은 무게로 전달된다.
@@ -1202,8 +1239,12 @@ function onMessage(msg) {
             msg.reply("명령어 실행 결과: 실패\n\n명령어 실행에 오류가 발생했습니다. 개발자에게 메시지가 전송되었으니 나중에 다시 시도해 주세요.");
             bot.send("승엽[EmotionB_SY]", `${getNowDateKor()}\n${msg.room} / ${msg.author.name}\n${err}`);
         }
-        Log.e(err);
+    } catch (e) {
+        // 안내조차 실패하면(방에 답할 수 없는 상태 등) 로그만 남기고 넘어간다.
+        // 여기서 예외가 새면 트램펄린이 두 번 처리하려 든다.
+        Log.e(e);
     }
+    Log.e(err);
 }
 
 /**
@@ -1230,8 +1271,32 @@ function isServerUnreachable(err) {
 bot.addListener(Event.MESSAGE, onMessage);
 
 
-function callApiGet(apiFeat, params) {
-    let apiUrl = `${API_URL}${apiFeat}`;
+// ─────────────────────────────────────────────────────────────────────────────
+// 서버 호출
+//
+// 메시지 처리는 봇마다 스레드 하나에서 돈다(실측: MsgBotScript-gsbot-N). 동기로
+// 통신하면 그동안 그 스레드를 잡고 있어 다른 방의 메시지 처리까지 밀린다.
+//
+// App.runOnBackgroundThread 는 이 문제에 쓸 수 없다 — 이름과 달리 새 스레드를
+// 만들지 않고 같은 스크립트 스레드에 작업을 얹는다. 실측: 2초짜리 작업 3개를
+// 넣으면 셋 다 MsgBotScript-… 한 스레드에서 차례로 돌았다.
+//
+// Http.request(url, callback) 은 진짜 비동기다. 즉시 반환하고(실측 2ms) 통신이
+// 끝나면 콜백이 스크립트 스레드로 되돌아온다. 콜백은 (error, response, document)
+// 이고 연결 실패는 예외가 아니라 error 로 온다. document 는 파싱된 JSoup
+// Document 라 본문은 document.body().text() 로 꺼낸다.
+//
+// 다만 URL 문자열만 받는다 — 헤더도 본문도 실을 수 없다. 그래서 POST 는 여전히
+// JSoup 동기 호출이다(callApiPost). 쓰는 곳이 /본캐 설정과 /건의 둘뿐이고 둘 다
+// 사용자가 어쩌다 한 번 쓰는 경로다.
+//
+// 핸들러는 제너레이터이고 `yield apiGet(...)` 으로 결과를 받는다. 생김새는 동기
+// 코드 그대로인데 실제로는 yield 에서 스레드를 놓았다가 콜백이 오면 이어서 돈다.
+// 그 진행은 runCommand 가 맡는다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildApiUrl(baseUrl, apiFeat, params) {
+    let apiUrl = `${baseUrl}${apiFeat}`;
 
     if(params) {
         let queryString = [];
@@ -1247,33 +1312,92 @@ function callApiGet(apiFeat, params) {
         }
     }
 
-    let response = JSOUP.connect(apiUrl)
-        .ignoreContentType(true)
-        .timeout(API_TIMEOUT_MS)
-        .get();
+    return apiUrl;
+}
 
-    if(response == null || response.body() == null) {
-        throw new Error("callApiGet 응답이 null입니다 (" + apiUrl + ")");
+/** 응답 본문을 JSON 으로 푼다. 서버가 resultRaw 를 안 주면 result 를 디코딩해 채운다. */
+function parseApiResponse(label, apiUrl, document) {
+    if(document == null || document.body() == null) {
+        throw new Error(label + " 응답이 null입니다 (" + apiUrl + ")");
     }
 
-    let body = response.body().text();
+    let body = document.body().text();
     if(body == null || body.length === 0) {
-        throw new Error("callApiGet 응답 본문이 비어있습니다 (" + apiUrl + ")");
+        throw new Error(label + " 응답 본문이 비어있습니다 (" + apiUrl + ")");
     }
 
     let data = JSON.parse(body);
     if(data == null) {
-        throw new Error("callApiGet JSON 파싱 결과가 null입니다 (" + apiUrl + ")");
+        throw new Error(label + " JSON 파싱 결과가 null입니다 (" + apiUrl + ")");
     }
-    // resultRaw가 없으면 result를 디코딩하여 보충
+
     if(data.resultRaw === undefined && data.result !== undefined) {
         data.resultRaw = decodeURIComponent(data.result);
     }
     return data;
 }
 
+/**
+ * yield 로 넘길 작업. "이어서 돌 함수(resume)를 받는 함수" 꼴이다.
+ * resume(error) 로 실패를, resume(null, 값) 으로 성공을 알린다.
+ */
+function httpGetJson(label, apiUrl) {
+    return function (resume) {
+        let settled = false;
+
+        // Http.request 는 타임아웃을 받지 못한다(URL 문자열만 받는다). 응답이
+        // 영영 안 오면 사용자는 아무 답도 못 받으므로 여기서 시간을 재 끊는다.
+        // 밑단 요청은 계속 떠 있을 수 있지만 스크립트 스레드는 이미 놓은 뒤다.
+        App.runDelayed(function () {
+            if(settled) return;
+            settled = true;
+            resume(new Error(`java.net.SocketTimeoutException: ${API_TIMEOUT_MS}ms 안에 응답이 없습니다 (${apiUrl})`));
+        }, API_TIMEOUT_MS);
+
+        Http.request(apiUrl, function (error, response, document) {
+            if(settled) return;
+            settled = true;
+
+            if(error) {
+                resume(error);
+                return;
+            }
+
+            try {
+                resume(null, parseApiResponse(label, apiUrl, document));
+            } catch (e) {
+                resume(e);
+            }
+        });
+    };
+}
+
+function apiGet(apiFeat, params) {
+    return httpGetJson("apiGet", buildApiUrl(API_URL, apiFeat, params));
+}
+
+/** /api 프리픽스 없이 루트 레벨 엔드포인트 호출용 */
+function rootApiGet(apiFeat, params) {
+    return httpGetJson("rootApiGet", buildApiUrl(BASE_URL, apiFeat, params));
+}
+
+/**
+ * 동기 GET. 관리자 명령(onCommand)에서만 쓴다 — 관리자 한 사람이 가끔 쓰는
+ * 경로라 스레드를 잠깐 잡아도 다른 방에 영향이 없고, 제너레이터로 바꿀 만한
+ * 이유가 없다. 사용자 명령은 apiGet 을 쓴다.
+ */
+function callApiGetSync(apiFeat, params) {
+    const apiUrl = buildApiUrl(API_URL, apiFeat, params);
+    const response = JSOUP.connect(apiUrl)
+        .ignoreContentType(true)
+        .timeout(API_TIMEOUT_MS)
+        .get();
+    return parseApiResponse("callApiGetSync", apiUrl, response);
+}
+
+/** POST. Http.request 가 헤더·본문을 싣지 못해 여기만 동기 JSoup 으로 남았다. */
 function callApiPost(apiFeat, dataObj) {
-    let apiUrl = `${API_URL}${apiFeat}`;
+    const apiUrl = `${API_URL}${apiFeat}`;
 
     let connection = JSOUP.connect(apiUrl)
         .header("Content-Type", "application/json")
@@ -1284,65 +1408,7 @@ function callApiPost(apiFeat, dataObj) {
         connection.requestBody(JSON.stringify(dataObj));
     }
 
-    let response = connection.post();
-
-    if(response == null || response.body() == null) {
-        throw new Error("callApiPost 응답이 null입니다 (" + apiUrl + ")");
-    }
-
-    let body = response.body().text();
-    if(body == null || body.length === 0) {
-        throw new Error("callApiPost 응답 본문이 비어있습니다 (" + apiUrl + ")");
-    }
-
-    let data = JSON.parse(body);
-    if(data == null) {
-        throw new Error("callApiPost JSON 파싱 결과가 null입니다 (" + apiUrl + ")");
-    }
-    return data;
-}
-
-// /api 프리픽스 없이 루트 레벨 엔드포인트 호출용
-function callRootApiGet(apiFeat, params) {
-    let apiUrl = `${BASE_URL}${apiFeat}`;
-
-    if(params) {
-        let queryString = [];
-        for(let key in params) {
-            if (params.hasOwnProperty(key)) {
-                let encodedValue = Packages.java.net.URLEncoder.encode(String(params[key]), "UTF-8");
-                queryString.push(key + "=" + encodedValue);
-            }
-        }
-
-        if (queryString.length > 0) {
-            apiUrl += `?${queryString.join("&")}`;
-        }
-    }
-
-    let response = JSOUP.connect(apiUrl)
-        .ignoreContentType(true)
-        .timeout(API_TIMEOUT_MS)
-        .get();
-
-    if(response == null || response.body() == null) {
-        throw new Error("callRootApiGet 응답이 null입니다 (" + apiUrl + ")");
-    }
-
-    let body = response.body().text();
-    if(body == null || body.length === 0) {
-        throw new Error("callRootApiGet 응답 본문이 비어있습니다 (" + apiUrl + ")");
-    }
-
-    let data = JSON.parse(body);
-    if(data == null) {
-        throw new Error("callRootApiGet JSON 파싱 결과가 null입니다 (" + apiUrl + ")");
-    }
-    // resultRaw가 없으면 result를 디코딩하여 보충
-    if(data.resultRaw === undefined && data.result !== undefined) {
-        data.resultRaw = decodeURIComponent(data.result);
-    }
-    return data;
+    return parseApiResponse("callApiPost", apiUrl, connection.post());
 }
 
 // Nexon OpenAPI 갱신 시간(0시~1시) 알림 메시지
@@ -1532,7 +1598,7 @@ function onCommand(msg) {
         }
 
         if(featString === "건의목록") {
-            let listData = callApiGet("/administrator/suggestion", options.length === 1 ? { "limit": options[0] } : null);
+            let listData = callApiGetSync("/administrator/suggestion", options.length === 1 ? { "limit": options[0] } : null);
             msg.reply(listData.resultRaw);
         }
 
