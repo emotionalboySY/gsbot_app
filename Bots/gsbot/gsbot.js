@@ -113,6 +113,11 @@ function replyByFormat(msg, parts) {
 const API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api";
 const BASE_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000";
 
+// JSoup 기본 타임아웃은 30초다. 리스너 스레드에서 동기로 부르므로 그동안 다른 방의
+// 메시지 처리까지 밀린다. 실측 응답은 가장 무거운 라우트도 0.4초 미만이라
+// 10초면 정상 요청을 자를 일이 없다. gsbot_loop.js 의 HttpURLConnection 과 같은 값.
+const API_TIMEOUT_MS = 10000;
+
 /**
  * (string) msg.content: 메시지의 내용
  * (string) msg.room: 메시지를 받은 방 이름
@@ -1071,11 +1076,40 @@ function onMessage(msg) {
         }
 
     } catch (err) {
-        message = "명령어 실행 결과: 실패\n\n명령어 실행에 오류가 발생했습니다. 개발자에게 메시지가 전송되었으니 나중에 다시 시도해 주세요.";
-        msg.reply(message);
-        bot.send("승엽[EmotionB_SY]", `${getNowDateKor()}\n${msg.room} / ${msg.author.name}\n${err}`);
+        // 서버에 닿지 못한 것과 코드 오류는 사용자가 할 일이 다르다.
+        // 배포 직후 PM2 reload 창에서 자주 나오는데, 같은 문구로 안내하면
+        // 코드 문제로 오인하고 개발자에게도 같은 무게로 전달된다.
+        if(isServerUnreachable(err)) {
+            msg.reply("명령어 실행 결과: 실패\n\n서버가 응답하지 않습니다. 잠시 후 다시 시도해 주세요.");
+            bot.send("승엽[EmotionB_SY]", `${getNowDateKor()}\n[서버 연결 실패] ${msg.room} / ${msg.author.name}\n${err}`);
+        } else {
+            msg.reply("명령어 실행 결과: 실패\n\n명령어 실행에 오류가 발생했습니다. 개발자에게 메시지가 전송되었으니 나중에 다시 시도해 주세요.");
+            bot.send("승엽[EmotionB_SY]", `${getNowDateKor()}\n${msg.room} / ${msg.author.name}\n${err}`);
+        }
         Log.e(err);
     }
+}
+
+/**
+ * 서버에 닿지 못해 난 실패인지 판별한다 (타임아웃·연결 거부·DNS 등).
+ * 자바 예외가 GraalJS 로 넘어오면 타입 비교가 엔진에 따라 달라져 문자열로 본다.
+ * HttpStatusException(4xx·5xx)은 서버가 응답은 한 것이라 여기에 넣지 않는다 —
+ * 그건 고쳐야 할 오류지 기다릴 일이 아니다.
+ */
+function isServerUnreachable(err) {
+    const text = String((err && err.message) ? err.message : err);
+    const causes = [
+        "SocketTimeoutException",   // 타임아웃 (API_TIMEOUT_MS 초과)
+        "ConnectException",         // 연결 거부 — PM2 reload 중
+        "UnknownHostException",     // DNS 실패
+        "NoRouteToHostException",   // 라우팅 불가
+        "SocketException",          // 연결 끊김(reset 등)
+        "ConnectTimeoutException"
+    ];
+    for(let i = 0; i < causes.length; i++) {
+        if(text.indexOf(causes[i]) >= 0) return true;
+    }
+    return false;
 }
 bot.addListener(Event.MESSAGE, onMessage);
 
@@ -1107,6 +1141,7 @@ function callApiGet(apiFeat, params) {
 
     let response = JSOUP.connect(apiUrl)
         .ignoreContentType(true)
+        .timeout(API_TIMEOUT_MS)
         .get();
 
     if(response == null || response.body() == null) {
@@ -1134,7 +1169,8 @@ function callApiPost(apiFeat, dataObj) {
 
     let connection = JSOUP.connect(apiUrl)
         .header("Content-Type", "application/json")
-        .ignoreContentType(true);
+        .ignoreContentType(true)
+        .timeout(API_TIMEOUT_MS);
 
     if(dataObj) {
         connection.requestBody(JSON.stringify(dataObj));
@@ -1178,6 +1214,7 @@ function callRootApiGet(apiFeat, params) {
 
     let response = JSOUP.connect(apiUrl)
         .ignoreContentType(true)
+        .timeout(API_TIMEOUT_MS)
         .get();
 
     if(response == null || response.body() == null) {
