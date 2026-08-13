@@ -782,7 +782,7 @@ function onMessage(msg) {
                 let royalData = callApiGet("/probability/boutique", params);
                 message += royalData.resultRaw;
             } else {
-                message = "명령어 실행 결과: 실패\n\n골드애플 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+                message = "명령어 실행 결과: 실패\n\n부티크 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
             }
 
             msg.reply(message);
@@ -1083,6 +1083,28 @@ function onMessage(msg) {
                 message = "명령어 실행 결과: 실패\n\n길드랭킹 조회는 총 2개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
             }
             msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["건의", "ㄱㅇ"])) {
+            if(options.length < 1) {
+                msg.reply("명령어 실행 결과: 실패\n\n건의 내용을 함께 입력해 주세요.\n\n/건의 [건의내용]");
+            } else {
+                let content = options.join(" ");
+                let dataObj = {
+                    "chatRoomName": msg.room,
+                    "talkProfileName": msg.author.name,
+                    "content": content
+                };
+                let suggestionData = callApiPost("/administrator/suggestion", dataObj);
+
+                // 접수 성공 시에만 관리자에게 전달한다. 저장은 유실 방지용 기록이고,
+                // 실제로 읽히는 경로는 이 전달이다.
+                if(suggestionData.success) {
+                    bot.send(ADMIN_NAME, `[건의 접수]\n${getNowDateKor()}\n${msg.room} / ${msg.author.name}\n\n${content}`);
+                }
+
+                msg.reply(suggestionData.resultRaw);
+            }
         }
 
         if(stringMatchResult(featString, ["도움말", "명령어", "ㄷㅇㅁ", "ㅁㄹㅇ"])) {
