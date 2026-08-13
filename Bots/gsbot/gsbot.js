@@ -268,7 +268,7 @@ function onMessage(msg) {
                     "talkProfileName": msg.author.name
                 };
                 mainCharacterData = callApiGet("/main_character/get", params);
-                messageData += `\n${mainCharacterData.resultRaw}`;
+                messageData += mainCharacterData.resultRaw;
             } else if(options.length === 1) {
                 let dataObj = {
                     "chatRoomName": msg.room,
@@ -276,7 +276,7 @@ function onMessage(msg) {
                     "characterName": options[0]
                 };
                 mainCharacterData = callApiPost("/main_character/set", dataObj);
-                messageData += `\n${mainCharacterData.resultRaw}`;
+                messageData += mainCharacterData.resultRaw;
             } else {
                 message = "명령어 실행 결과: 실패\n\n본캐 지정 시 띄어쓰기 없이 닉네임을 온전히 입력해 주세요.";
             }
