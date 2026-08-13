@@ -7,6 +7,15 @@ const MESSAGE_PREFIX = '/';
 
 // 보스 반지 상자 5종. mode 는 서버의 상자 번호와 1:1 로 맞춰야 한다.
 // onMessage 안에 두면 메시지마다 재생성되므로 모듈 스코프에 둔다.
+// 캐시샵 확률형 아이템 5종. key 는 서버 라우트 이름과 일치해야 한다.
+const CASH_BOXES = [
+    { "key": "royal",         "name": "로얄스타일",   "aliases": ["ㄹㅇ", "ㄹㅇㅅㅌㅇ", "로얄스타일"] },
+    { "key": "wonder",        "name": "원더베리",     "aliases": ["ㅇㄷㅂㄹ", "원더베리", "원기베리"] },
+    { "key": "goldApple",     "name": "골드애플",     "aliases": ["ㄱㄷㅇㅍ", "골드애플"] },
+    { "key": "platinumApple", "name": "플래티넘애플", "aliases": ["ㅍㄾㄴㅇㅍ", "ㅍㄹㅌㄴㅇㅍ", "플래티넘애플"] },
+    { "key": "boutique",      "name": "부티크",       "aliases": ["ㅂㅌㅋ", "ㅂㅌㅋㄱㅍㅌ", "부티크기프트", "부티크"] }
+];
+
 const SEED_RING_BOXES = [
     { "mode": 0, "name": "녹옥", "aliases": ["녹옥", "ㄴㅇ"] },
     { "mode": 1, "name": "홍옥", "aliases": ["홍옥", "ㅎㅇ1"] },
@@ -713,92 +722,21 @@ function onMessage(msg) {
             msg.reply(message);
         }
 
-        if(stringMatchResult(featString, ["ㄹㅇ", "ㄹㅇㅅㅌㅇ", "로얄스타일"])) {
-            message = "";
+        for(let i = 0; i < CASH_BOXES.length; i++) {
+            let box = CASH_BOXES[i];
+            if(!stringMatchResult(featString, box.aliases)) continue;
 
-            if(options.length === 1) {
-                let params = {
-                    "iteration": options[0]
-                }
-
-                let royalData = callApiGet("/probability/royal", params);
-                message += royalData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n로얄스타일 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            if(options.length !== 1) {
+                msg.reply(`명령어 실행 결과: 실패\n\n${box.name} 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.`);
+                break;
             }
 
-            msg.reply(message);
+            let cashData = callApiGet(`/probability/${box.key}`, { "iteration": options[0] });
+            replyByFormat(msg, [{ "data": cashData }]);
+            break;
         }
 
-        if(stringMatchResult(featString, ["ㅇㄷㅂㄹ", "원더베리", "원기베리"])) {
-            message = "";
-
-            if(options.length === 1) {
-                let params = {
-                    "iteration": options[0]
-                }
-
-                let royalData = callApiGet("/probability/wonder", params);
-                message += royalData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n로얄스타일 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
-            }
-
-            msg.reply(message);
-        }
-
-        if(stringMatchResult(featString, ["ㄱㄷㅇㅍ", "골드애플"])) {
-            message = "";
-
-            if(options.length === 1) {
-                let params = {
-                    "iteration": options[0]
-                }
-
-                let royalData = callApiGet("/probability/goldApple", params);
-                message += royalData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n골드애플 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
-            }
-
-            msg.reply(message);
-        }
-
-        if(stringMatchResult(featString, ["ㅍㄾㄴㅇㅍ", "ㅍㄹㅌㄴㅇㅍ", "플래티넘애플"])) {
-            message = "";
-
-            if(options.length === 1) {
-                let params = {
-                    "iteration": options[0]
-                }
-
-                let royalData = callApiGet("/probability/platinumApple", params);
-                message += royalData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n플래티넘 애플 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
-            }
-
-            msg.reply(message);
-        }
-
-        if(stringMatchResult(featString, ["ㅂㅌㅋ", "ㅂㅌㅋㄱㅍㅌ", "부티크기프트", "부티크"])) {
-            message = "";
-
-            if(options.length === 1) {
-                let params = {
-                    "iteration": options[0]
-                }
-
-                let royalData = callApiGet("/probability/boutique", params);
-                message += royalData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n부티크 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
-            }
-
-            msg.reply(message);
-        }
-
-        if(stringMatchResult(featString, ["이벤트", "ㅇㅂㅌ"])) {
+                                        if(stringMatchResult(featString, ["이벤트", "ㅇㅂㅌ"])) {
             message = "";
 
             let eventData = callApiGet("/homepage/event");
