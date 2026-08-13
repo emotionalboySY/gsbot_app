@@ -171,6 +171,25 @@ function loadBot(opts) {
             runOnUiThread(fn) { fn(); },
             isMainThread: () => true,
         },
+        // 메신저봇의 Http. 실기기 실측대로 콜백은 (error, response, document) 이고
+        // 연결 실패는 예외가 아니라 error 로 온다. 여기서는 콜백을 그 자리에서
+        // 부른다 — 트램펄린이 send() 안에서 끝나야 스냅샷으로 비교할 수 있다.
+        Http: {
+            request(url, callback) {
+                const call = { url: String(url), timeout: null, headers: {}, body: null, via: 'Http' };
+                call.method = 'GET';
+                const u = new URL(call.url);
+                call.endpoint = u.pathname;
+                call.params = Object.fromEntries(u.searchParams.entries());
+                state.calls.push(call);
+
+                const res = responder(call);
+                if (res instanceof Error) { callback(res, null, null); return null; }
+                const text = typeof res === 'string' ? res : JSON.stringify(res);
+                callback(null, { statusCode: () => 200 }, { body: () => ({ text: () => text }) });
+                return null;
+            },
+        },
         // 파일은 메모리에만 둔다. 실제 디스크를 건드리면 검증이 기기 상태에 얽힌다.
         FileStream: {
             read: (f) => (Object.prototype.hasOwnProperty.call(state.files, f) ? state.files[f] : null),
