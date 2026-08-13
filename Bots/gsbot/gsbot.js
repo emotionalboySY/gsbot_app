@@ -5,6 +5,16 @@ const URLDecoder = Packages.java.net.URLDecoder;
 
 const MESSAGE_PREFIX = '/';
 
+// 보스 반지 상자 5종. mode 는 서버의 상자 번호와 1:1 로 맞춰야 한다.
+// onMessage 안에 두면 메시지마다 재생성되므로 모듈 스코프에 둔다.
+const SEED_RING_BOXES = [
+    { "mode": 0, "name": "녹옥", "aliases": ["녹옥", "ㄴㅇ"] },
+    { "mode": 1, "name": "홍옥", "aliases": ["홍옥", "ㅎㅇ1"] },
+    { "mode": 2, "name": "흑옥", "aliases": ["흑옥", "ㅎㅇ2"] },
+    { "mode": 3, "name": "백옥", "aliases": ["백옥", "ㅂㅇ"] },
+    { "mode": 4, "name": "생명", "aliases": ["생명", "ㅅㅁ"] }
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 마크다운 출력
 //
@@ -877,48 +887,19 @@ function onMessage(msg) {
             msg.reply(message);
         }
 
-        if(stringMatchResult(featString, ["녹옥", "ㄴㅇ"])) {
-            message = "";
-            if(options.length === 1) {
-                let seedRingData = callRootApiGet(`/seedRing/0/${options[0]}`);
-                message += seedRingData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n녹옥 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
-            }
-            msg.reply(message);
-        }
+        for(let i = 0; i < SEED_RING_BOXES.length; i++) {
+            let box = SEED_RING_BOXES[i];
+            if(!stringMatchResult(featString, box.aliases)) continue;
 
-        if(stringMatchResult(featString, ["홍옥", "ㅎㅇ1"])) {
-            message = "";
-            if(options.length === 1) {
-                let seedRingData = callRootApiGet(`/seedRing/1/${options[0]}`);
-                message += seedRingData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n홍옥 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
+            if(options.length !== 1) {
+                msg.reply(`명령어 실행 결과: 실패\n\n${box.name} 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.`);
+                break;
             }
-            msg.reply(message);
-        }
 
-        if(stringMatchResult(featString, ["흑옥", "ㅎㅇ2"])) {
-            message = "";
-            if(options.length === 1) {
-                let seedRingData = callRootApiGet(`/seedRing/2/${options[0]}`);
-                message += seedRingData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n흑옥 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
-            }
-            msg.reply(message);
-        }
-
-        if(stringMatchResult(featString, ["백옥", "ㅂㅇ"])) {
-            message = "";
-            if(options.length === 1) {
-                let seedRingData = callRootApiGet(`/seedRing/3/${options[0]}`);
-                message += seedRingData.resultRaw;
-            } else {
-                message = "명령어 실행 결과: 실패\n\n백옥 시뮬레이션은 총 1개의 변수만 입력 가능합니다. 다시 입력해 주세요.";
-            }
-            msg.reply(message);
+            let encodedCount = Packages.java.net.URLEncoder.encode(String(options[0]), "UTF-8");
+            let seedRingData = callRootApiGet(`/seedRing/${box.mode}/${encodedCount}`);
+            replyByFormat(msg, [{ "data": seedRingData }]);
+            break;
         }
 
         if(stringMatchResult(featString, ["행운의채널", "채널", "ㅎㅇㅇㅊㄴ"])) {
