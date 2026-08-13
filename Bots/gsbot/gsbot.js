@@ -1085,6 +1085,23 @@ function onMessage(msg) {
             msg.reply(message);
         }
 
+        if(stringMatchResult(featString, ["주문서", "ㅈㅁㅅ"])) {
+            // 인자 없음 → 주문서 목록 / [주문서] → 1회 / [주문서] [횟수] → 횟수만큼
+            let params = {};
+            if(options.length >= 1) {
+                let last = options[options.length - 1];
+                if(options.length >= 2 && /^\d+$/.test(String(last))) {
+                    params.query = options.slice(0, options.length - 1).join(" ");
+                    params.iteration = last;
+                } else {
+                    params.query = options.join(" ");
+                }
+            }
+
+            let orderSheetData = callApiGet("/probability/orderSheet", options.length >= 1 ? params : null);
+            replyByFormat(msg, [{ "data": orderSheetData }]);
+        }
+
         if(stringMatchResult(featString, ["건의", "ㄱㅇ"])) {
             if(options.length < 1) {
                 msg.reply("명령어 실행 결과: 실패\n\n건의 내용을 함께 입력해 주세요.\n\n/건의 [건의내용]");
@@ -1432,6 +1449,20 @@ function onCommand(msg) {
         if(featString === "관리자해제") {
             Database.writeString(ADMIN_DB_FILE, "");
             msg.reply("관리자 등록을 해제했습니다. 다시 등록하려면 \"@@관리자등록 [토큰]\" 을 사용하세요.");
+        }
+
+        if(featString === "건의목록") {
+            let listData = callApiGet("/administrator/suggestion", options.length === 1 ? { "limit": options[0] } : null);
+            msg.reply(listData.resultRaw);
+        }
+
+        if(featString === "건의삭제") {
+            if(options.length !== 1) {
+                msg.reply("삭제할 건의의 id 를 입력해 주세요.\n\n@@건의삭제 [id]\n(id 는 @@건의목록 에서 확인)");
+            } else {
+                let deleteData = callApiPost("/administrator/suggestion/delete", { "id": options[0] });
+                msg.reply(deleteData.resultRaw);
+            }
         }
 
         if(featString === "공지전송") {
