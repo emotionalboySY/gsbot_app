@@ -5,6 +5,9 @@ const URLDecoder = Packages.java.net.URLDecoder;
 
 const MESSAGE_PREFIX = '/';
 
+// 서버 utils/format.js 의 RULE 과 같은 문자. 결과 묶음을 눈으로 가른다.
+const SECTION_RULE = "──────────";
+
 // 보스 반지 상자 5종. mode 는 서버의 상자 번호와 1:1 로 맞춰야 한다.
 // onMessage 안에 두면 메시지마다 재생성되므로 모듈 스코프에 둔다.
 // 캐시샵 확률형 아이템 5종. key 는 서버 라우트 이름과 일치해야 한다.
@@ -93,8 +96,7 @@ function replyByFormat(msg, parts) {
 
     let message = "";
     for(let i = 0; i < parts.length; i++) {
-        // 마크다운은 소제목(###)이 구분 역할을 하므로 구분선 없이 빈 줄만 둔다
-        if(i > 0) message += useMarkdown ? "\n\n\n" : "\n\n---------------------\n\n";
+        if(i > 0) message += `\n\n${SECTION_RULE}\n\n`;
         if(parts[i].prefix) message += parts[i].prefix;
         if(useMarkdown && parts[i].markdownPrefix) message += parts[i].markdownPrefix;
         if(!useMarkdown && parts[i].plainPrefix) message += parts[i].plainPrefix;
@@ -271,7 +273,8 @@ function onMessage(msg) {
                 params.characterName = options[0];
             }
 
-            let levelData = callApiGet("/history/level", params);
+            // 최근 10건만 (서버 기본값에 기대지 않고 명시한다)
+            let levelData = callApiGet("/history/level", Object.assign({}, params, { "limit": 10 }));
             replyByFormat(msg, [{ "data": levelData, "prefix": message }]);
         }
 
@@ -720,6 +723,19 @@ function onMessage(msg) {
 
             message = `오늘은 [${activityList[randomActIndex]}]가 어떨까요?`;
             msg.reply(message);
+        }
+
+        if(stringMatchResult(featString, ["연마석", "연마", "ㅇㅁㅅ", "ㅇㅁ"])) {
+            if(options.length !== 3) {
+                msg.reply("명령어 실행 결과: 실패\n\n/연마석 [반지레벨] [연마석개수] [시도횟수]\n[반지레벨]: 4(4→5연마) 또는 5(5→6연마)\n[연마석개수]: 4레벨 0~10개 / 5레벨 0~20개\n[시도횟수]: 1 ~ 20회");
+            } else {
+                let polishData = callApiGet("/probability/ringPolish", {
+                    "level": options[0],
+                    "stones": options[1],
+                    "attempts": options[2]
+                });
+                replyByFormat(msg, [{ "data": polishData }]);
+            }
         }
 
         for(let i = 0; i < CASH_BOXES.length; i++) {
