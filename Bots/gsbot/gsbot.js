@@ -513,7 +513,10 @@ function replyByFormat(msg, parts) {
 
     if(useMarkdown) {
         msg.replyWithMarkdown(message);
-        App.runDelayed(returnToHome, MARKDOWN_HOME_DELAY_MS);
+        // App.runDelayed 를 쓰면 안 된다 — 예약해 둔 콜백이 재컴파일 뒤에 터지면
+        // "The Context is already closed" 로 봇 전원이 꺼진다(실측). setTimeout 은
+        // 같은 상황에서 조용히 버려진다.
+        setTimeout(returnToHome, MARKDOWN_HOME_DELAY_MS);
     } else {
         msg.reply(message);
     }
@@ -1354,22 +1357,22 @@ function parseApiResponse(label, apiUrl, document) {
  */
 function httpGetJson(label, apiUrl) {
     return function (resume) {
-        let settled = false;
-
-        // Http.request 는 타임아웃을 받지 못한다(URL 문자열만 받는다). 응답이
-        // 영영 안 오면 사용자는 아무 답도 못 받으므로 여기서 시간을 재 끊는다.
-        // 밑단 요청은 계속 떠 있을 수 있지만 스크립트 스레드는 이미 놓은 뒤다.
-        App.runDelayed(function () {
-            if(settled) return;
-            settled = true;
-            resume(new Error(`java.net.SocketTimeoutException: ${API_TIMEOUT_MS}ms 안에 응답이 없습니다 (${apiUrl})`));
-        }, API_TIMEOUT_MS);
-
         Http.request(apiUrl, function (error, response, document) {
-            if(settled) return;
-            settled = true;
-
             if(error) {
+                // Http.request 의 타임아웃은 약 1.5초로 고정이다(실측). 우리 서버는
+                // 보통 0.4초 안에 답하지만 느려질 때가 있고, 그때 정상 응답을
+                // 버리면 안 된다. 읽기 타임아웃일 때만 동기로 한 번 더 간다 —
+                // 이 경로는 스레드를 잡지만 이미 서버가 느린 드문 경우다.
+                // 연결 자체가 안 되는 경우(ConnectException)는 재시도하지 않는다.
+                if(String(error).indexOf("SocketTimeoutException") >= 0) {
+                    try {
+                        resume(null, syncGetJson(label, apiUrl));
+                    } catch (e) {
+                        resume(e);
+                    }
+                    return;
+                }
+
                 resume(error);
                 return;
             }
@@ -1381,6 +1384,15 @@ function httpGetJson(label, apiUrl) {
             }
         });
     };
+}
+
+/** 동기 GET. Http.request 가 1.5초에 자른 뒤의 재시도와 관리자 명령이 쓴다. */
+function syncGetJson(label, apiUrl) {
+    const response = JSOUP.connect(apiUrl)
+        .ignoreContentType(true)
+        .timeout(API_TIMEOUT_MS)
+        .get();
+    return parseApiResponse(label, apiUrl, response);
 }
 
 function apiGet(apiFeat, params) {
@@ -1398,12 +1410,7 @@ function rootApiGet(apiFeat, params) {
  * 이유가 없다. 사용자 명령은 apiGet 을 쓴다.
  */
 function callApiGetSync(apiFeat, params) {
-    const apiUrl = buildApiUrl(API_URL, apiFeat, params);
-    const response = JSOUP.connect(apiUrl)
-        .ignoreContentType(true)
-        .timeout(API_TIMEOUT_MS)
-        .get();
-    return parseApiResponse("callApiGetSync", apiUrl, response);
+    return syncGetJson("callApiGetSync", buildApiUrl(API_URL, apiFeat, params));
 }
 
 /** POST. Http.request 가 헤더·본문을 싣지 못해 여기만 동기 JSoup 으로 남았다. */
