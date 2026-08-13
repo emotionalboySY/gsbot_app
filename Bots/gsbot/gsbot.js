@@ -1108,13 +1108,14 @@ function onMessage(msg) {
         }
 
         if(stringMatchResult(featString, ["도움말", "명령어", "ㄷㅇㅁ", "ㅁㄹㅇ"])) {
-            let helpData = callApiGet("/extra/help");
+            // 인자를 주면 분류명 또는 명령어명으로 좁혀서 조회한다
+            let helpParams = options.length > 0 ? { "query": options.join(" ") } : null;
+            let helpData = callApiGet("/extra/help", helpParams);
 
-            Log.d(helpData.resultRaw);
-
-            let message = "현재 일부 기능만 사용 가능하며, 복구되지 않은 명령어를 사용하면 오류가 발생하니 양해 부탁드립니다.\n\n";
-            message += helpData.resultRaw;
-            msg.reply(message);
+            replyByFormat(msg, [{
+                "data": helpData,
+                "prefix": "현재 일부 기능만 사용 가능하며, 복구되지 않은 명령어를 사용하면 오류가 발생하니 양해 부탁드립니다.\n\n"
+            }]);
         }
 
     } catch (err) {
