@@ -75,7 +75,7 @@ function replyByFormat(msg, parts) {
     let message = "";
     for(let i = 0; i < parts.length; i++) {
         // 마크다운은 소제목(###)이 구분 역할을 하므로 구분선 없이 빈 줄만 둔다
-        if(i > 0) message += useMarkdown ? "\n\n" : "\n\n---------------------\n\n";
+        if(i > 0) message += useMarkdown ? "\n\n\n" : "\n\n---------------------\n\n";
         if(parts[i].prefix) message += parts[i].prefix;
         if(useMarkdown && parts[i].markdownPrefix) message += parts[i].markdownPrefix;
         if(!useMarkdown && parts[i].plainPrefix) message += parts[i].plainPrefix;
@@ -186,7 +186,7 @@ function onMessage(msg) {
         }
 
         if(stringMatchResult(featString, ["ㅎㅅ", "히스토리", "히스"])) {
-            message = getNexonAPINotice() + "명령어 실행 결과: 성공\n";
+            message = getNexonAPINotice();
             messageData = "";
 
             let params = {
@@ -209,21 +209,21 @@ function onMessage(msg) {
             let levelData = callApiGet("/history/level", levelParams);
 
             // 본캐 조회일 땐 봇이 캐릭터명을 모르므로 서버가 돌려준 값을 쓴다
-            let historyName = expData.characterName || levelData.characterName || "";
+            let historyTitle = expData.title || levelData.title || "";
 
             replyByFormat(msg, [
                 {
                     "data": expData,
-                    "prefix": message + "\n",
-                    "markdownPrefix": historyName ? `## ${historyName}의 히스토리\n\n` : "",
-                    "plainPrefix": historyName ? `[${historyName}의 히스토리]\n\n` : ""
+                    "prefix": message,
+                    "markdownPrefix": historyTitle ? `## ${historyTitle}\n\n` : "",
+                    "plainPrefix": historyTitle ? `[${historyTitle}]\n\n` : ""
                 },
                 { "data": levelData }
             ]);
         }
 
         if(stringMatchResult(featString, ["ㄱㅎㅊㅎㅅㅌㄹ", "경험치히스토리", "경험치히스토리"])) {
-            message = getNexonAPINotice() + "명령어 실행 결과: 성공\n";
+            message = getNexonAPINotice();
             messageData = "";
 
             let params = {
@@ -236,11 +236,11 @@ function onMessage(msg) {
             }
 
             let expData = callApiGet("/history/exp", params);
-            replyByFormat(msg, [{ "data": expData, "prefix": message + "\n" }]);
+            replyByFormat(msg, [{ "data": expData, "prefix": message }]);
         }
 
         if(stringMatchResult(featString, ["ㄹㅂㅎㅅㅌㄹ", "ㄼㅎㅅㅌㄹ", "레벨히스토리", "레벨히스토리"])) {
-            message = getNexonAPINotice() + "명령어 실행 결과: 성공\n";
+            message = getNexonAPINotice();
             messageData = "";
 
             let params = {
@@ -253,11 +253,11 @@ function onMessage(msg) {
             }
 
             let levelData = callApiGet("/history/level", params);
-            replyByFormat(msg, [{ "data": levelData, "prefix": message + "\n" }]);
+            replyByFormat(msg, [{ "data": levelData, "prefix": message }]);
         }
 
         if(stringMatchResult(featString, ["ㅂㅋ", "본캐"])) {
-            message = "명령어 실행 결과: 성공\n";
+            message = "";
             messageData = "";
 
             let mainCharacterData;
