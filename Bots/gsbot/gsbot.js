@@ -521,8 +521,15 @@ function replyByFormat(msg, parts) {
         msg.reply(message);
     }
 }
-const API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api";
-const BASE_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000";
+// EC2 의 3000 포트를 직접 치지 않고 nginx 를 거친다. Node 는 유휴 커넥션을
+// 5초에 닫는데(keepAliveTimeout 기본값) 안드로이드 OkHttp — Http.request 와
+// JSoup 이 모두 이걸 탄다 — 는 그 안내를 무시하고 유휴 커넥션을 몇 분씩 풀에
+// 들고 있다가 재사용한다. 이미 닫힌 소켓에 쓴 요청은 사라지고 응답을 영영
+// 기다리게 되며, 여기엔 java.net.SocketTimeoutException: timeout 으로 보인다.
+// nginx 는 keep-alive 를 75초 유지해 그 창이 겹치지 않는다(실측: 폰에서
+// 3000 직결은 유휴 6초부터 요청 유실, nginx 경유는 61초까지 정상).
+const API_URL = "https://api.emotionbsy.com/api";
+const BASE_URL = "https://api.emotionbsy.com";
 
 // JSoup 기본 타임아웃은 30초다. 리스너 스레드에서 동기로 부르므로 그동안 다른 방의
 // 메시지 처리까지 밀린다. 실측 응답은 가장 무거운 라우트도 0.4초 미만이라
