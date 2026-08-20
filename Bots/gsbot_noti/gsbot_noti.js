@@ -28,6 +28,16 @@
 //
 // 3. Event.TICK 은 20ms 주기(50Hz)라 주기 작업에 쓰면 안 된다. setInterval 을 쓴다.
 //
+// 4. 카톡 알림이라고 다 메시지가 되는 것은 아니다. 메신저봇은 알림의 "답장"
+//    액션(RemoteInput)으로 메시지를 만들고 답한다. 그 액션이 없는 알림은
+//    Event.MESSAGE 가 될 수 없으므로 짝을 지을 대상이 아니다.
+//
+//      아케인 편안길드  actions = [0] "읽음"  [1] "답장"   ← RemoteInput 있음
+//      카카오톡 선물하기 actions = [0] "읽음"              ← 없음
+//
+//    이걸 세는 바람에 "카카오톡 선물하기" 채널의 광고가 매일 한 건씩 누락으로
+//    잡혔다. 2026-08-20 기준 누적 누락 10건 중 9건이 이것이었다.
+//
 // 이 봇은 기록만 한다. 카카오톡으로 나가는 것은 경보뿐이고 그마저 쿨다운이 있다.
 // 실제 데이터는 EVENT_LOG 에 쌓이므로 adb 로 꺼내 본다.
 //
@@ -53,6 +63,10 @@ const SWEEP_MS = 60 * 1000;                 // 짝 안 맞은 것 걷어내는 �
 const SUMMARY_MS = 10 * 60 * 1000;          // 요약 적재 주기
 // 모든 앱을 통틀어 알림이 이 시간 동안 0건이면 리스너 언바인드를 의심한다.
 const SILENCE_ALERT_MS = 30 * 60 * 1000;
+// 심야에는 아무도 대화하지 않아 30분 침묵이 정상이다. 그대로 두면 경보가
+// 새벽에만 쏟아진다 — 2026-08-20 기준 51건 중 47건이 01~08시였다.
+// 이 시간대에는 경보를 올리지 않고, 낮이 된 뒤 흐른 시간만 침묵으로 센다.
+const QUIET_HOUR_END = 9;
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000;   // 같은 종류의 경보 재발송 간격
 
 // ── 상태 ────────────────────────────────────────────────────────────────────
@@ -75,6 +89,7 @@ function defaultState() {
         notiTotal: 0,        // 모든 앱의 알림
         notiKakao: 0,        // 카카오톡 알림 (요약 포함)
         notiSummary: 0,      // 그중 GROUP_SUMMARY
+        notiNoReply: 0,      // 그중 답장 액션이 없는 것 (채널 광고 등) — 짝 대상 아님
         notiMessage: 0,      // 그중 실제 메시지 알림 — 이게 비교 대상이다
         msgTotal: 0,         // Event.MESSAGE
         paired: 0,           // 알림과 메시지가 짝을 이룬 건수
@@ -146,6 +161,46 @@ function deviceSnapshot() {
     return snap;
 }
 
+/**
+ * 이 알림이 Event.MESSAGE 가 될 수 있는가.
+ *
+ * 메신저봇은 "답장" 액션에 실린 RemoteInput 으로 메시지를 만들고 답한다.
+ * 그게 없으면 봇이 받을 방법 자체가 없으므로 누락으로 셀 대상이 아니다.
+ * 구조를 못 읽으면 true 로 둔다 — 세는 쪽이 진짜 누락을 놓치지 않는다.
+ */
+function hasReplyAction(notification) {
+    try {
+        const actions = notification.actions;
+        if (!actions) return false;
+        for (let i = 0; i < actions.length; i++) {
+            const action = actions[i];
+            if (!action) continue;
+            const inputs = action.getRemoteInputs();
+            if (inputs && inputs.length > 0) return true;
+        }
+        return false;
+    } catch (e) {
+        Log.e("답장 액션 확인 실패: " + e);
+        return true;
+    }
+}
+
+/**
+ * 경보 판단에 쓸 침묵 시간. 심야는 0 으로 본다.
+ * 심야를 막 벗어났을 때는 낮이 된 뒤 흐른 시간까지만 센다 — 밤새 조용했다고
+ * 아침 9시 정각에 경보가 터지면 그것도 거짓이다.
+ */
+function effectiveSilenceMs() {
+    const since = nowMs() - (state.lastNotiAt || state.startedAt);
+
+    const dayStart = new Date();
+    dayStart.setHours(QUIET_HOUR_END, 0, 0, 0);
+    const sinceDayStart = nowMs() - dayStart.getTime();
+
+    if (sinceDayStart < 0) return 0;          // 아직 심야다
+    return Math.min(since, sinceDayStart);
+}
+
 /** 같은 종류의 경보는 쿨다운 안에 다시 보내지 않는다. */
 function alert(kind, text) {
     const last = state.alerts[kind] || 0;
@@ -182,6 +237,7 @@ function pair(queueMine, queueOther, channelId, entry) {
 function sweep() {
     const cutoff = nowMs() - PAIR_GRACE_MS;
     let newMissed = 0;
+    const missedRooms = [];
 
     for (const channelId in notiQueue) {
         const queue = notiQueue[channelId];
@@ -190,6 +246,8 @@ function sweep() {
             state.missedNoti++;
             channelStat(channelId).missed++;
             newMissed++;
+            const where = roomNames[channelId] || ("채널 " + channelId);
+            if (missedRooms.indexOf(where) < 0) missedRooms.push(where);
             logEvent("missed", {
                 channelId: channelId,
                 room: roomNames[channelId] || null,
@@ -209,13 +267,15 @@ function sweep() {
     }
 
     if (newMissed > 0) {
+        // 어느 방인지 같이 싣는다. 방 이름 없이 숫자만 오면 매번 기록을 뒤져야 한다.
+        const where = missedRooms.length > 0 ? "\n대상: " + missedRooms.join(", ") : "";
         alert("missed",
-            `알림은 왔는데 봇이 못 받은 메시지 ${newMissed}건 (누적 ${state.missedNoti}건)\n` +
+            `알림은 왔는데 봇이 못 받은 메시지 ${newMissed}건 (누적 ${state.missedNoti}건)${where}\n` +
             "→ 원인 B. 알림 접근 권한을 껐다 켜면 리스너가 다시 붙습니다.");
     }
 
     // 모든 앱을 통틀어 알림이 오래 0건이면 리스너 자체가 떨어진 것으로 본다.
-    const silence = nowMs() - (state.lastNotiAt || state.startedAt);
+    const silence = effectiveSilenceMs();
     if (silence > SILENCE_ALERT_MS) {
         alert("silence",
             `${Math.round(silence / 60000)}분간 알림이 한 건도 없습니다 — 리스너 언바인드 의심\n` +
@@ -239,6 +299,13 @@ bot.addListener(Event.NOTIFICATION_POSTED, function (sbn) {
         const notification = sbn.getNotification();
         if (notification && (notification.flags & FLAG_GROUP_SUMMARY) !== 0) {
             state.notiSummary++;
+            return;
+        }
+
+        // 답장 액션이 없는 알림은 애초에 Event.MESSAGE 가 될 수 없다.
+        // 카톡 채널(선물하기 등) 광고가 여기 걸린다.
+        if (notification && !hasReplyAction(notification)) {
+            state.notiNoReply++;
             return;
         }
 
@@ -291,7 +358,8 @@ function summaryText() {
         "[알림진단]",
         `관측 ${uptimeMin}분 · 마지막 알림 ${sinceText(state.lastNotiAt)} · 마지막 메시지 ${sinceText(state.lastMsgAt)}`,
         "",
-        `전체 알림 ${state.notiTotal} (카톡 ${state.notiKakao} = 요약 ${state.notiSummary} + 메시지 ${state.notiMessage})`,
+        `전체 알림 ${state.notiTotal} (카톡 ${state.notiKakao} = 요약 ${state.notiSummary}` +
+            ` + 답장불가 ${state.notiNoReply} + 메시지 ${state.notiMessage})`,
         `Event.MESSAGE ${state.msgTotal} · 짝 맞음 ${state.paired}`,
         `누락 의심(알림 O·메시지 X) ${state.missedNoti} · 알림 없이 온 메시지 ${state.msgWithoutNoti}`,
     ];
