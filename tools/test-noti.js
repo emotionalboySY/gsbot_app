@@ -14,15 +14,29 @@ const NOTI_SOURCE = path.join(__dirname, '..', 'Bots', 'gsbot_noti', 'gsbot_noti
 const KAKAO = 'com.kakao.talk';
 const FLAG_GROUP_SUMMARY = 512;
 
-/** 실기기에서 확인한 StatusBarNotification 의 모양만 흉내 낸다. */
+/**
+ * 실기기에서 확인한 StatusBarNotification 의 모양만 흉내 낸다.
+ *
+ * 액션 구성이 중요하다 — 실측(2026-08-20, dumpsys notification):
+ *   대화방      actions = [0] "읽음"  [1] "답장"(RemoteInput 있음)
+ *   채널 광고   actions = [0] "읽음"                 ← 답장이 없다
+ * 봇은 답장 액션으로 메시지를 만들므로, 없으면 Event.MESSAGE 가 될 수 없다.
+ */
 function notification(opts) {
-    const o = Object.assign({ pkg: KAKAO, tag: '111', flags: 17 }, opts);
+    const o = Object.assign({ pkg: KAKAO, tag: '111', flags: 17, reply: true }, opts);
+    const actions = [{ title: '읽음', getRemoteInputs: () => null }];
+    if (o.reply) actions.push({ title: '답장', getRemoteInputs: () => [{}] });
     return {
         getPackageName: () => o.pkg,
         getTag: () => o.tag,
         getId: () => 2,
-        getNotification: () => ({ flags: o.flags }),
+        getNotification: () => ({ flags: o.flags, actions: actions }),
     };
+}
+
+// KST 기준 시각으로 봇을 띄운다. 침묵 경보가 시간대를 보기 때문에 필요하다.
+function kstBot(month, day, hour, minute) {
+    return newBot(Date.UTC(2026, month - 1, day, hour - 9, minute || 0, 0));
 }
 
 /** 카카오톡이 실제로 올리는 한 쌍: 묶음 요약 + 진짜 메시지 알림 */
@@ -99,6 +113,50 @@ console.log('\n▸ 알림만 오고 메시지가 없으면 누락(B)으로 잡�
     check('방별 누락 1건', s.byChannel['111'].missed, 1);
     check('관리자에게 경보 1건', bot.state.sent.length, 1);
     check('경보 문구에 원인 B', /원인 B/.test(bot.state.sent[0].text), true);
+    check('어느 방인지 실림', /대상: 채널 111/.test(bot.state.sent[0].text), true);
+}
+
+console.log('\n▸ 답장 액션이 없는 알림(채널 광고)은 누락으로 세지 않는다');
+{
+    const bot = newBot();
+    // "카카오톡 선물하기" 채널이 실제로 이 모양이다. 읽음만 있고 답장이 없다.
+    bot.emit('notificationPosted', notification({ tag: null, flags: FLAG_GROUP_SUMMARY }));
+    bot.emit('notificationPosted', notification({ tag: '4867538442305625', reply: false }));
+    bot.advanceTime(30000);
+    const s = stateOf(bot);
+    check('답장불가로 분류', s.notiNoReply, 1);
+    check('메시지 알림으로 세지 않음', s.notiMessage, 0);
+    check('누락 0건', s.missedNoti, 0);
+    check('경보 없음', bot.state.sent.length, 0);
+}
+
+console.log('\n▸ 심야에는 침묵 경보를 올리지 않는다');
+{
+    const bot = kstBot(8, 20, 5, 0);       // 05:00 KST
+    bot.advanceTime(40 * 60 * 1000);        // 40분간 알림 0건
+    bot.fireTimers('interval');
+    check('경보 없음', bot.state.sent.length, 0);
+}
+
+console.log('\n▸ 낮에 40분간 알림이 없으면 침묵 경보가 나간다');
+{
+    const bot = kstBot(8, 20, 12, 0);      // 12:00 KST
+    bot.advanceTime(40 * 60 * 1000);
+    bot.fireTimers('interval');
+    check('경보 1건', bot.state.sent.length, 1);
+    check('언바인드 의심 문구', /리스너 언바인드 의심/.test(bot.state.sent[0].text), true);
+}
+
+console.log('\n▸ 밤새 조용했다고 아침 9시에 바로 터지지는 않는다');
+{
+    const bot = kstBot(8, 20, 8, 50);      // 08:50 KST — 아직 심야
+    bot.advanceTime(25 * 60 * 1000);        // 09:15 · 낮이 된 지 15분
+    bot.fireTimers('interval');
+    check('아직 경보 없음', bot.state.sent.length, 0);
+
+    bot.advanceTime(20 * 60 * 1000);        // 09:35 · 낮이 된 지 35분
+    bot.fireTimers('interval');
+    check('그 뒤에는 경보', bot.state.sent.length, 1);
 }
 
 console.log('\n▸ 카카오톡이 아닌 알림은 전체 수만 올린다');
