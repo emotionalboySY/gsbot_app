@@ -105,7 +105,32 @@ console.log('\n[8] 네트워크 실패는 파일을 건드리지 않는다');
   check('사유 안내', /받지 못했습니다/.test(r.replies[0].text));
 }
 
-console.log('\n[9] 다른 봇도 갱신할 수 있다');
+console.log('\n[9] 줄바꿈이 뭉개진 응답은 덮어쓰지 않는다 (실제 사고)');
+{
+  // JSoup 의 get().body().text() 가 돌려주던 모양. 길이도 충분하고 표식도
+  // 그대로라 예전 검사 두 개를 모두 통과한 채 봇을 한 줄로 만들어 죽였다.
+  const flattened = VALID.split('\n').join(' ');
+  const bot = bootWith(flattened);
+  bot.state.files['/sdcard/msgbot/Bots/gsbot/gsbot.js'] = '원본 유지되어야 함';
+  const r = bot.send({ content: '@@스크립트갱신', room: '앙메톡', author: admin }, 'command');
+  check('길이는 하한을 넘김 (길이 검사로는 못 거름)', flattened.length > 4000, String(flattened.length) + '자');
+  check('표식도 들어있음 (표식 검사로도 못 거름)', flattened.indexOf('BotManager.getCurrentBot') >= 0);
+  check('그래도 파일은 그대로', bot.state.files['/sdcard/msgbot/Bots/gsbot/gsbot.js'] === '원본 유지되어야 함');
+  check('재컴파일 안 함', r.compiled.length === 0);
+  check('사유 안내', /줄바꿈이 뭉개진/.test(r.replies[0].text), JSON.stringify(r.replies[0].text).slice(0, 70));
+}
+
+console.log('\n[10] 받은 소스의 줄바꿈이 그대로 보존된다');
+{
+  const bot = bootWith(VALID);
+  bot.send({ content: '@@스크립트갱신', room: '앙메톡', author: admin }, 'command');
+  const written = bot.state.files['/sdcard/msgbot/Bots/gsbot/gsbot.js'];
+  check('줄 수 유지', written.split('\n').length === VALID.split('\n').length,
+    written.split('\n').length + ' / ' + VALID.split('\n').length);
+  check('내용 동일', written === VALID);
+}
+
+console.log('\n[11] 다른 봇도 갱신할 수 있다');
 {
   const bot = bootWith(VALID);
   const r = bot.send({ content: '@@스크립트갱신 gsbot_noti', room: '앙메톡', author: admin }, 'command');

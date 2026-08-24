@@ -1604,6 +1604,11 @@ const UPDATABLE_BOTS = ["gsbot", "gsbot_noti", "gsbot_loop"];
 // 4천 자면 정상 파일을 자를 일이 없다.
 const MIN_SCRIPT_LENGTH = 4000;
 
+// 줄 수 하한. 길이만 보면 줄바꿈이 뭉개진 응답을 못 거른다 — 그런 응답도
+// 글자 수는 원본의 8할이 넘는다. 가장 작은 gsbot_loop.js 가 200줄 남짓이라
+// 100줄이면 정상 스크립트를 자를 일이 없다.
+const MIN_SCRIPT_LINES = 100;
+
 function scriptPathOf(botName) {
     return `${FileStream.getSdcardPath()}/msgbot/Bots/${botName}/${botName}.js`;
 }
@@ -1627,13 +1632,18 @@ function handleScriptUpdate(msg, options) {
 
     let source;
     try {
-        source = JSOUP.connect(url)
+        // execute().body() 여야 한다. get() 은 응답을 HTML 로 파싱한 Document 를
+        // 주고, 거기서 꺼낸 body().text() 는 HTML 텍스트 추출 규칙을 탄다 —
+        // 줄바꿈과 들여쓰기가 전부 공백 하나로 합쳐진다. 그렇게 받은 소스는
+        // 파일 크기만 줄어든 채(실측: 71,789자 → 59,529자) 통째로 한 줄이 되고,
+        // 맨 앞 // 주석이 나머지 코드를 전부 삼켜 봇이 죽는다. 다른 곳에서
+        // get() 을 쓰는 것은 응답이 JSON 한 줄이라 이 문제가 드러나지 않았다.
+        source = String(JSOUP.connect(url)
             .ignoreContentType(true)
             .timeout(API_TIMEOUT_MS)
             .maxBodySize(0)          // 기본 1MB 제한. 스크립트가 커지면 조용히 잘린다.
-            .get()
-            .body()
-            .text();
+            .execute()
+            .body());
     } catch (e) {
         msg.reply(`스크립트를 받지 못했습니다.\n${e}`);
         return;
@@ -1647,6 +1657,16 @@ function handleScriptUpdate(msg, options) {
     // 길이만으로 걸러지지 않으므로 스크립트라면 반드시 있는 것을 확인한다.
     if(source.indexOf("BotManager.getCurrentBot") < 0) {
         msg.reply("받은 내용에서 봇 스크립트의 표식을 찾지 못했습니다.\n덮어쓰지 않았습니다.");
+        return;
+    }
+    // 줄바꿈이 뭉개진 응답을 거른다.
+    //
+    // 이걸로 한 번 죽였다. HTML 로 파싱된 소스는 길이도 충분하고 위의 표식도
+    // 그대로 들어 있어서 두 검사를 모두 통과한 채 한 줄짜리로 덮어써졌다.
+    // 줄 수는 그 사고에서 유일하게 표가 났던 값이다(1,924줄 → 0줄).
+    const lineCount = source.split("\n").length;
+    if(lineCount < MIN_SCRIPT_LINES) {
+        msg.reply(`받은 내용의 줄 수가 ${lineCount}줄뿐입니다. 줄바꿈이 뭉개진 응답으로 보입니다.\n덮어쓰지 않았습니다.`);
         return;
     }
 

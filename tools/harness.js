@@ -115,6 +115,19 @@ function loadBot(opts) {
         }
 
         const conn = {
+            // execute() 는 파싱하지 않은 응답이다. body() 가 원문 그대로 온다 —
+            // get().body().text() 와 달리 줄바꿈이 살아 있다.
+            execute() {
+                call.method = 'GET';
+                const u = new URL(call.url);
+                call.endpoint = u.pathname;
+                call.params = Object.fromEntries(u.searchParams.entries());
+                state.calls.push(call);
+                const res = responder(call);
+                if (res instanceof Error) throw res;
+                const text = typeof res === 'string' ? res : JSON.stringify(res);
+                return { body: () => text };
+            },
             ignoreContentType() { return conn; },
             timeout(ms) { call.timeout = ms; return conn; },
             header(k, v) { call.headers[k] = String(v); return conn; },
