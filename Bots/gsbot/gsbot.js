@@ -1035,35 +1035,56 @@ const COMMANDS = [
         // ㄴㅈ 는 안드로이드 한글 키보드에서 ㄵ 으로 합쳐져 들어온다.
         "aliases": ["농장","ㄴㅈ","ㄵ"],
         "handler": function* (msg, options) {
-            // 인자 개수로 기능이 갈린다.
-            //   /농장 [닉네임] [횟수]        → 들어갈 수 있는 농장 전부 비교
-            //   /농장 [농장] [닉네임] [횟수] → 그 농장 하나만 자세히
-            let farmText = null;
-            let characterName;
-            let entries;
+            // 인자 개수로만 갈린다.
+            //   /농장 [횟수|목표]           본캐
+            //   /농장 [닉네임] [횟수|목표]
+            //
+            // 예전에는 첫 인자로 농장을 고를 수 있었는데 "크림슨"(Lv.282)·
+            // "딸기농장"(Lv.215)·"블루베리"(Lv.286) 같은 캐릭터가 실제로 있어
+            // 닉네임인지 농장인지 가릴 수 없었다. 하필 전부 입장 가능 레벨대라
+            // 어느 쪽으로 읽어도 그럴듯한 답이 나온다. 농장 선택을 없애고
+            // 입장 가능한 농장을 전부 보여주는 쪽으로 바꿨다.
+            let characterName = null;
+            let amountText;
 
-            if(options.length === 2) {
+            if(options.length === 1) {
+                amountText = options[0];
+            } else if(options.length === 2) {
                 characterName = options[0];
-                entries = options[1];
-            } else if(options.length === 3) {
-                farmText = options[0];
-                characterName = options[1];
-                entries = options[2];
+                amountText = options[1];
             } else {
                 msg.reply("명령어 실행 결과: 실패\n\n" +
-                    "농장 계산은 아래 두 가지로 입력할 수 있습니다.\n\n" +
+                    "/농장 [입장횟수]\n" +
+                    "/농장 [목표레벨]렙\n" +
                     "/농장 [닉네임] [입장횟수]\n" +
-                    "/농장 [농장종류] [닉네임] [입장횟수]\n\n" +
-                    "농장종류: 황금딸기(딸농), 블루베리(블루), 메카베리(메카), 크림슨베리(크림슨)");
+                    "/농장 [닉네임] [목표레벨]렙\n\n" +
+                    "닉네임을 생략하면 /본캐 로 지정한 캐릭터로 조회합니다.\n" +
+                    "닉네임이 숫자로만 되어 있으면 /농장 [닉네임] [횟수] 형태로 입력해 주세요.");
                 return;
             }
 
-            const encodedName = Packages.java.net.URLEncoder.encode(String(characterName), "UTF-8");
-            const params = { "entries": entries };
-            // 농장 이름은 서버가 초성까지 풀어서 맞춘다 — 여기서는 그대로 넘긴다.
-            if(farmText !== null) params.farm = farmText;
+            const amount = parseFarmAmount(amountText);
+            if(amount === null) {
+                msg.reply("명령어 실행 결과: 실패\n\n" +
+                    `[${amountText}] 를 읽을 수 없습니다.\n\n` +
+                    "입장 횟수는 숫자로, 목표 레벨은 숫자 뒤에 '렙' 을 붙여 주세요.\n" +
+                    "예: /농장 30 · /농장 290렙");
+                return;
+            }
 
-            const berryData = yield apiGet(`/berry/character/${encodedName}`, params);
+            const params = {
+                // 본캐를 찾으려면 서버가 어느 방의 누구인지 알아야 한다
+                "chatRoomName": msg.room,
+                "talkProfileName": msg.author.name
+            };
+            params[amount.mode] = amount.value;
+
+            let endpoint = "/berry/character";
+            if(characterName !== null) {
+                endpoint += "/" + Packages.java.net.URLEncoder.encode(String(characterName), "UTF-8");
+            }
+
+            const berryData = yield apiGet(endpoint, params);
             replyByFormat(msg, [{ "data": berryData, "prefix": getNexonAPINotice() }]);
         }
     },
@@ -1548,6 +1569,36 @@ function callApiPost(apiFeat, dataObj) {
  */
 function newClientKey() {
     return `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+}
+
+// "290렙" 처럼 뒤에 붙여 목표 레벨임을 알리는 꼬리표. 대소문자는 보지 않는다.
+const LEVEL_SUFFIXES = ["레벨", "렙", "level", "lv"];
+
+/**
+ * /농장 의 마지막 인자를 읽는다.
+ *
+ *   "30"      → { mode: "entries", value: 30 }   30회 입장
+ *   "290렙"   → { mode: "target",  value: 290 }  290레벨까지
+ *
+ * 숫자 범위로 둘을 갈라 볼 수도 있지만(101~300 이면 레벨) "/농장 300" 이
+ * 300회인지 300레벨까지인지 정해지지 않는다. 꼬리표가 있어야 확실하다.
+ * 못 읽으면 null 을 준다 — 호출부가 안내를 띄운다.
+ */
+function parseFarmAmount(text) {
+    const raw = String(text).trim();
+    const lower = raw.toLowerCase();
+
+    for(let i = 0; i < LEVEL_SUFFIXES.length; i++) {
+        const suffix = LEVEL_SUFFIXES[i];
+        if(lower.length > suffix.length && lower.lastIndexOf(suffix) === lower.length - suffix.length) {
+            const head = raw.substring(0, raw.length - suffix.length).trim();
+            if(!/^\d+$/.test(head)) return null;
+            return { "mode": "target", "value": Number(head) };
+        }
+    }
+
+    if(!/^\d+$/.test(raw)) return null;
+    return { "mode": "entries", "value": Number(raw) };
 }
 
 // Nexon OpenAPI 갱신 시간(0시~1시) 알림 메시지
