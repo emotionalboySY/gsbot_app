@@ -84,6 +84,7 @@ function loadBot(opts) {
         timers: {},       // 등록된 setInterval/setTimeout — 자동으로 돌지 않는다
         timerSeq: 0,
         listeners: {},
+        compiled: [],     // BotManager.compile(name) 로 넘어온 봇 이름
     };
 
     const db = Object.assign({}, opts.database || {});
@@ -118,6 +119,7 @@ function loadBot(opts) {
             timeout(ms) { call.timeout = ms; return conn; },
             header(k, v) { call.headers[k] = String(v); return conn; },
             requestBody(b) { call.body = String(b); return conn; },
+            maxBodySize(n) { call.maxBodySize = n; return conn; },
             get() { return finish('GET'); },
             post() { return finish('POST'); },
         };
@@ -151,7 +153,12 @@ function loadBot(opts) {
     const sandbox = {
         console,
         URL, URLSearchParams,
-        BotManager: { getCurrentBot: () => bot },
+        // compile 은 호출만 기록한다. 실제로 돌리면 실행 중인 컨텍스트가
+        // 갈려서 테스트가 그 자리에서 끊긴다.
+        BotManager: {
+            getCurrentBot: () => bot,
+            compile: (name) => { state.compiled.push(String(name)); return true; },
+        },
         Event,
         Log: {
             e(x) { state.logs.push({ level: 'e', text: String(x) }); },
@@ -256,7 +263,7 @@ function loadBot(opts) {
 
     /** 메시지 1건을 리스너에 흘려보내고, 그 호출로 생긴 기록만 돌려준다. */
     function send(msg, event) {
-        const before = { calls: state.calls.length, replies: state.replies.length, sent: state.sent.length };
+        const before = { calls: state.calls.length, replies: state.replies.length, sent: state.sent.length, compiled: state.compiled.length };
         const full = Object.assign({
             content: '',
             room: '테스트방',
@@ -285,6 +292,7 @@ function loadBot(opts) {
             calls: state.calls.slice(before.calls),
             replies: state.replies.slice(before.replies),
             sent: state.sent.slice(before.sent),
+            compiled: state.compiled.slice(before.compiled),
         };
     }
 

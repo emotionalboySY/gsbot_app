@@ -521,13 +521,23 @@ function replyByFormat(msg, parts) {
         msg.reply(message);
     }
 }
-// EC2 의 3000 포트를 직접 치지 않고 nginx 를 거친다. Node 는 유휴 커넥션을
-// 5초에 닫는데(keepAliveTimeout 기본값) 안드로이드 OkHttp — Http.request 와
-// JSoup 이 모두 이걸 탄다 — 는 그 안내를 무시하고 유휴 커넥션을 몇 분씩 풀에
-// 들고 있다가 재사용한다. 이미 닫힌 소켓에 쓴 요청은 사라지고 응답을 영영
-// 기다리게 되며, 여기엔 java.net.SocketTimeoutException: timeout 으로 보인다.
-// nginx 는 keep-alive 를 75초 유지해 그 창이 겹치지 않는다(실측: 폰에서
-// 3000 직결은 유휴 6초부터 요청 유실, nginx 경유는 61초까지 정상).
+// EC2 의 3000 포트를 직접 치지 않고 리버스 프록시를 거친다. Node 는 유휴
+// 커넥션을 5초에 닫는데(keepAliveTimeout 기본값) 안드로이드 클라이언트는 그
+// 안내를 무시하고 유휴 커넥션을 몇 분씩 풀에 들고 있다가 재사용한다. 이미
+// 닫힌 소켓에 쓴 요청은 사라지고 응답을 영영 기다리게 되며, 여기엔
+// java.net.SocketTimeoutException: timeout 으로 보인다. 프록시를 거치면 그
+// 창이 겹치지 않는다(실측: 폰에서 3000 직결은 유휴 6초부터 요청 유실,
+// 프록시 경유는 61초까지 정상).
+//
+// 프록시는 nginx 가 아니라 Caddy 다 — 응답에 via: 1.1 Caddy 가 붙는다.
+// 예전 주석이 nginx 로 적혀 있었고 "75초" 도 거기서 온 값이라 실제 설정과
+// 맞는지 확인되지 않았다. 서버에 들어가 볼 수 있게 되면 idle_timeout 을
+// 확인할 것.
+//
+// 이 경로가 완전히 닫힌 것은 아니다. 2026-08-19 에 서버의 keepAliveTimeout 을
+// 65초로 올렸는데(gsbot_manager_server 5eab3b6) 그 10분 뒤와 이틀 뒤에도 같은
+// 예외가 났다. 그 값은 프록시↔Node 구간이라 실제로 끊기는 폰↔프록시 구간과
+// 다르다. 그래서 POST 에는 callApiPost 에 재시도를 따로 두었다.
 const API_URL = "https://api.emotionbsy.com/api";
 const BASE_URL = "https://api.emotionbsy.com";
 
@@ -1022,6 +1032,42 @@ const COMMANDS = [
         }
     },
     {
+        // ㄴㅈ 는 안드로이드 한글 키보드에서 ㄵ 으로 합쳐져 들어온다.
+        "aliases": ["농장","ㄴㅈ","ㄵ"],
+        "handler": function* (msg, options) {
+            // 인자 개수로 기능이 갈린다.
+            //   /농장 [닉네임] [횟수]        → 들어갈 수 있는 농장 전부 비교
+            //   /농장 [농장] [닉네임] [횟수] → 그 농장 하나만 자세히
+            let farmText = null;
+            let characterName;
+            let entries;
+
+            if(options.length === 2) {
+                characterName = options[0];
+                entries = options[1];
+            } else if(options.length === 3) {
+                farmText = options[0];
+                characterName = options[1];
+                entries = options[2];
+            } else {
+                msg.reply("명령어 실행 결과: 실패\n\n" +
+                    "농장 계산은 아래 두 가지로 입력할 수 있습니다.\n\n" +
+                    "/농장 [닉네임] [입장횟수]\n" +
+                    "/농장 [농장종류] [닉네임] [입장횟수]\n\n" +
+                    "농장종류: 황금딸기(딸농), 블루베리(블루), 메카베리(메카), 크림슨베리(크림슨)");
+                return;
+            }
+
+            const encodedName = Packages.java.net.URLEncoder.encode(String(characterName), "UTF-8");
+            const params = { "entries": entries };
+            // 농장 이름은 서버가 초성까지 풀어서 맞춘다 — 여기서는 그대로 넘긴다.
+            if(farmText !== null) params.farm = farmText;
+
+            const berryData = yield apiGet(`/berry/character/${encodedName}`, params);
+            replyByFormat(msg, [{ "data": berryData, "prefix": getNexonAPINotice() }]);
+        }
+    },
+    {
         "aliases": ["길드랭킹","ㄱㄷㄹㅋ"],
         "handler": function* (msg, options) {
             let message = getNexonAPINotice();
@@ -1067,20 +1113,45 @@ const COMMANDS = [
             } else {
                 // 여러 줄로 쓴 건의를 한 줄로 뭉개지 않는다
                 let content = rawText;
+
+                // 관리자 전달을 저장보다 먼저 한다.
+                //
+                // 예전에는 저장이 성공해야만 전달했는데, 저장이 타임아웃으로
+                // 실패하면 callApiPost 가 예외를 던져 이 줄까지 오지도 못했다.
+                // 그때 사용자에게 가는 안내와 관리자에게 가는 오류 알림에는
+                // 방 이름과 작성자만 실려 있어서, 건의 본문은 서버에도 관리자
+                // 에게도 남지 않고 통째로 사라졌다(실측: 2026-08-21 16:43).
+                // 저장은 유실 방지용 기록이고 실제로 읽히는 경로는 이 전달이라,
+                // 순서를 뒤집는 것만으로 본문이 사라질 일이 없어진다.
+                let delivered = false;
+                try {
+                    delivered = bot.send(ADMIN_NAME,
+                        `[건의 접수]\n${getNowDateKor()}\n${msg.room} / ${msg.author.name}\n\n${content}`) !== false;
+                } catch (e) {
+                    Log.e("건의 관리자 전달 실패: " + e);
+                }
+
                 let dataObj = {
                     "chatRoomName": msg.room,
                     "talkProfileName": msg.author.name,
-                    "content": content
+                    "content": content,
+                    // 재시도가 중복 저장이 되지 않도록 서버가 이 키로 걸러 낸다
+                    "clientKey": newClientKey()
                 };
-                let suggestionData = callApiPost("/administrator/suggestion", dataObj);
 
-                // 접수 성공 시에만 관리자에게 전달한다. 저장은 유실 방지용 기록이고,
-                // 실제로 읽히는 경로는 이 전달이다.
-                if(suggestionData.success) {
-                    bot.send(ADMIN_NAME, `[건의 접수]\n${getNowDateKor()}\n${msg.room} / ${msg.author.name}\n\n${content}`);
+                let message;
+                try {
+                    message = callApiPost("/administrator/suggestion", dataObj).resultRaw;
+                } catch (e) {
+                    // 저장에 실패해도 관리자에게 닿았으면 건의는 전달된 것이다.
+                    // 여기서 실패라고 답하면 사용자는 멀쩡히 전달된 건의를 다시 쓴다.
+                    Log.e("건의 저장 실패: " + e);
+                    message = delivered
+                        ? "건의가 접수되었습니다. 검토 후 반영하겠습니다. 감사합니다."
+                        : "명령어 실행 결과: 실패\n\n건의 접수에 실패했습니다. 잠시 후 다시 시도해 주세요.";
                 }
 
-                msg.reply(suggestionData.resultRaw);
+                msg.reply(message);
             }
         }
     },
@@ -1420,10 +1491,8 @@ function callApiGetSync(apiFeat, params) {
     return syncGetJson("callApiGetSync", buildApiUrl(API_URL, apiFeat, params));
 }
 
-/** POST. Http.request 가 헤더·본문을 싣지 못해 여기만 동기 JSoup 으로 남았다. */
-function callApiPost(apiFeat, dataObj) {
-    const apiUrl = `${API_URL}${apiFeat}`;
-
+/** POST 한 번. 재시도는 callApiPost 가 맡는다. */
+function postOnce(apiUrl, dataObj) {
     let connection = JSOUP.connect(apiUrl)
         .header("Content-Type", "application/json")
         .ignoreContentType(true)
@@ -1434,6 +1503,51 @@ function callApiPost(apiFeat, dataObj) {
     }
 
     return parseApiResponse("callApiPost", apiUrl, connection.post());
+}
+
+/**
+ * POST. Http.request 가 헤더·본문을 싣지 못해 여기만 동기 JSoup 으로 남았다.
+ *
+ * 타임아웃이면 한 번 더 간다. GET 은 httpGetJson 이 같은 일을 하고 있어(읽기
+ * 타임아웃일 때 syncGetJson 으로 재시도) 이쪽만 없었다.
+ *
+ * 죽은 커넥션을 잡아서 나는 실패라 재시도가 듣는다 — 실패하면서 그 커넥션이
+ * 풀에서 빠지고 다음 시도는 새로 연다. JSoup(HttpURLConnection)은 상시 트래픽인
+ * GET(OkHttp)과 커넥션 풀이 달라서, 어쩌다 한 번 쓰는 POST 는 늘 오래 놀던
+ * 커넥션을 잡는다. 실제로 /건의 는 하루 수천 건이 오가는 중에도 간헐적으로만
+ * java.net.SocketTimeoutException 으로 실패했다.
+ *
+ * 요청이 이미 닿은 뒤 응답만 유실된 경우에도 재시도가 나가므로, 두 번 보내도
+ * 결과가 같은 요청에만 붙일 수 있다. 현재 POST 를 쓰는 세 곳은 모두 그렇다.
+ *
+ *   /건의        clientKey 를 실어 보내고 서버가 그 키로 중복을 막는다
+ *                (routes/administrator.js)
+ *   /본캐 설정   (방, 프로필) 로 찾아 덮어쓰는 구조라 그대로 멱등이다
+ *   @@건의삭제   두 번째는 "찾을 수 없음" 이 되지만 이미 지워진 뒤라 결과는 같다
+ *
+ * 키도 없고 덮어쓰기도 아닌 POST 를 새로 붙일 때는 서버 쪽 중복 처리를 함께
+ * 봐야 한다.
+ */
+function callApiPost(apiFeat, dataObj) {
+    const apiUrl = `${API_URL}${apiFeat}`;
+
+    try {
+        return postOnce(apiUrl, dataObj);
+    } catch (e) {
+        // 연결 자체가 안 되는 경우(ConnectException)는 재시도하지 않는다 —
+        // 서버가 내려간 것이라 두 번째도 같은 결과다. GET 쪽과 같은 판단.
+        if(String(e).indexOf("SocketTimeoutException") < 0) throw e;
+        Log.e("callApiPost 타임아웃, 1회 재시도: " + apiUrl);
+        return postOnce(apiUrl, dataObj);
+    }
+}
+
+/**
+ * 재시도해도 서버가 같은 요청으로 알아볼 수 있게 붙이는 키.
+ * 시각과 난수를 섞는다 — 같은 사람이 같은 초에 두 번 보내도 갈린다.
+ */
+function newClientKey() {
+    return `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
 // Nexon OpenAPI 갱신 시간(0시~1시) 알림 메시지
@@ -1469,6 +1583,110 @@ function getNowDateKor() {
  */
 
 const ROOM_LIST = ["06-21", "집사 네 마리", "그녀석의 재획교실", "아케인 편안길드", "무친자들의 모임", "앙메톡"];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 원격 스크립트 갱신
+//
+// 폰에 파일을 넣는 길이 adb push 뿐이라, 맥과 폰이 같은 망에 있고 무선 디버깅
+// 페어링이 살아 있어야만 배포가 됐다. 페어링은 실제로 종종 풀린다(실측:
+// 2026-08-21, 폰 화면을 만질 수 없어 그날 배포가 막혔다). 저장소에 올린 것을
+// 폰이 직접 받아 덮어쓰면 그 조건이 전부 사라진다.
+//
+// 받아오는 주소는 상수다. 사용자가 주소를 넘길 수 있게 만들면 그 순간
+// "관리자 계정으로 임의 코드를 폰에 심는 명령" 이 된다. 인자로 받는 것은 봇
+// 이름뿐이고 그마저 아래 목록에 있는 것만 받는다 — 목록에 없는 이름은
+// ../ 같은 조각이 섞여 들어와도 경로가 되지 않는다.
+const SCRIPT_SOURCE_BASE = "https://raw.githubusercontent.com/emotionalboySY/gsbot_app/main/Bots";
+const UPDATABLE_BOTS = ["gsbot", "gsbot_noti", "gsbot_loop"];
+
+// 받은 내용이 스크립트가 맞는지 보는 하한. 404 안내 페이지나 잘린 응답이
+// 그대로 덮어써지면 봇이 통째로 죽는다. 현재 gsbot.js 가 9만 자 남짓이라
+// 4천 자면 정상 파일을 자를 일이 없다.
+const MIN_SCRIPT_LENGTH = 4000;
+
+function scriptPathOf(botName) {
+    return `${FileStream.getSdcardPath()}/msgbot/Bots/${botName}/${botName}.js`;
+}
+
+/**
+ * 저장소의 최신 스크립트를 받아 폰의 파일을 덮어쓰고 재컴파일한다.
+ *
+ * 자기 자신(gsbot)을 갱신하면 재컴파일 시점에 지금 돌고 있는 컨텍스트가
+ * 갈린다. 그래서 결과 보고를 먼저 하고 compile 을 맨 마지막에 부른다 —
+ * 순서를 바꾸면 성공해도 답이 오지 않는다.
+ */
+function handleScriptUpdate(msg, options) {
+    const botName = options.length > 0 ? String(options[0]) : "gsbot";
+
+    if(UPDATABLE_BOTS.indexOf(botName) < 0) {
+        msg.reply(`갱신할 수 있는 봇이 아닙니다: ${botName}\n\n가능: ${UPDATABLE_BOTS.join(" / ")}`);
+        return;
+    }
+
+    const url = `${SCRIPT_SOURCE_BASE}/${botName}/${botName}.js`;
+
+    let source;
+    try {
+        source = JSOUP.connect(url)
+            .ignoreContentType(true)
+            .timeout(API_TIMEOUT_MS)
+            .maxBodySize(0)          // 기본 1MB 제한. 스크립트가 커지면 조용히 잘린다.
+            .get()
+            .body()
+            .text();
+    } catch (e) {
+        msg.reply(`스크립트를 받지 못했습니다.\n${e}`);
+        return;
+    }
+
+    if(!source || source.length < MIN_SCRIPT_LENGTH) {
+        msg.reply(`받은 내용이 스크립트로 보기에 너무 짧습니다 (${source ? source.length : 0}자).\n덮어쓰지 않았습니다.`);
+        return;
+    }
+    // JSoup 은 HTML 로 읽어 태그를 지운 텍스트를 주기도 한다. 그런 응답은
+    // 길이만으로 걸러지지 않으므로 스크립트라면 반드시 있는 것을 확인한다.
+    if(source.indexOf("BotManager.getCurrentBot") < 0) {
+        msg.reply("받은 내용에서 봇 스크립트의 표식을 찾지 못했습니다.\n덮어쓰지 않았습니다.");
+        return;
+    }
+
+    const path = scriptPathOf(botName);
+
+    // 되돌릴 수 있게 직전 것을 남긴다. 새 스크립트에 문제가 있어 봇이 아예
+    // 뜨지 않으면 명령으로도 되돌릴 수 없으니, 그때는 이 파일을 adb 로 되돌린다.
+    let previous = null;
+    try {
+        previous = FileStream.read(path);
+        if(previous) FileStream.write(path + ".bak", previous);
+    } catch (e) {
+        Log.e("이전 스크립트 백업 실패: " + e);
+    }
+
+    if(previous && previous === source) {
+        msg.reply(`이미 최신입니다. (${botName}, ${source.length}자)`);
+        return;
+    }
+
+    try {
+        FileStream.write(path, source);
+    } catch (e) {
+        msg.reply(`파일을 쓰지 못했습니다.\n${e}`);
+        return;
+    }
+
+    const sizeText = previous
+        ? `${previous.length}자 → ${source.length}자`
+        : `${source.length}자`;
+    msg.reply(`[스크립트 갱신] ${botName}\n${sizeText}\n\n재컴파일합니다.`);
+
+    // 마지막. 자기 자신이면 이 아래로는 돌지 않는다.
+    try {
+        BotManager.compile(botName);
+    } catch (e) {
+        Log.e("재컴파일 실패: " + e);
+        msg.reply(`재컴파일에 실패했습니다. 앱에서 직접 컴파일해 주세요.\n${e}`);
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 관리자 인증
@@ -1635,6 +1853,11 @@ function onCommand(msg) {
                 let deleteData = callApiPost("/administrator/suggestion/delete", { "id": options[0] });
                 msg.reply(deleteData.resultRaw);
             }
+        }
+
+        if(featString === "스크립트갱신") {
+            handleScriptUpdate(msg, options);
+            return;
         }
 
         if(featString === "공지전송") {
