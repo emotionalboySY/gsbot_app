@@ -1058,6 +1058,7 @@ const COMMANDS = [
                     "/농장 [목표레벨]렙\n" +
                     "/농장 [닉네임] [입장횟수]\n" +
                     "/농장 [닉네임] [목표레벨]렙\n\n" +
+                    "예) /농장 30 · /농장 290렙까지 · /농장 베베 100회\n\n" +
                     "닉네임을 생략하면 /본캐 로 지정한 캐릭터로 조회합니다.\n" +
                     "닉네임이 숫자로만 되어 있으면 /농장 [닉네임] [횟수] 형태로 입력해 주세요.");
                 return;
@@ -1067,8 +1068,8 @@ const COMMANDS = [
             if(amount === null) {
                 msg.reply("명령어 실행 결과: 실패\n\n" +
                     `[${amountText}] 를 읽을 수 없습니다.\n\n` +
-                    "입장 횟수는 숫자로, 목표 레벨은 숫자 뒤에 '렙' 을 붙여 주세요.\n" +
-                    "예: /농장 30 · /농장 290렙");
+                    "입장 횟수는 숫자로, 목표 레벨은 숫자 뒤에 '렙' 이나 '까지' 를 붙여 주세요.\n" +
+                    "예) /농장 30 · /농장 30회 · /농장 290렙 · /농장 290렙까지");
                 return;
             }
 
@@ -1571,34 +1572,69 @@ function newClientKey() {
     return `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
-// "290렙" 처럼 뒤에 붙여 목표 레벨임을 알리는 꼬리표. 대소문자는 보지 않는다.
+// 목표 레벨임을 알리는 꼬리표. 대소문자는 보지 않는다.
+// "레벨" 이 "렙" 보다 앞이어야 한다 — 짧은 쪽을 먼저 보면 "290레벨" 에서
+// "렙" 이 걸리지 않아(끝 두 글자가 "레벨") 문제는 없지만, 꼬리표가 늘어날 때
+// 긴 것부터 보는 순서를 지켜 두는 편이 안전하다.
 const LEVEL_SUFFIXES = ["레벨", "렙", "level", "lv"];
+// 횟수 쪽 꼬리표. 붙여도 되고 안 붙여도 된다.
+const COUNT_SUFFIXES = ["회", "번"];
+// 어느 쪽에나 붙을 수 있는 말. "290까지" 처럼 홀로 오면 목표로 본다.
+const UNTIL_SUFFIX = "까지";
+
+/** text 가 suffix 로 끝나면 그 앞부분을, 아니면 null 을 준다. */
+function stripSuffix(text, suffix) {
+    const lower = text.toLowerCase();
+    if(lower.length <= suffix.length) return null;
+    if(lower.lastIndexOf(suffix) !== lower.length - suffix.length) return null;
+    return text.substring(0, text.length - suffix.length).trim();
+}
 
 /**
  * /농장 의 마지막 인자를 읽는다.
  *
- *   "30"      → { mode: "entries", value: 30 }   30회 입장
- *   "290렙"   → { mode: "target",  value: 290 }  290레벨까지
+ *   "30" · "30회" · "30번"           → { mode: "entries", value: 30 }
+ *   "290렙" · "290까지" · "290렙까지" → { mode: "target",  value: 290 }
  *
  * 숫자 범위로 둘을 갈라 볼 수도 있지만(101~300 이면 레벨) "/농장 300" 이
  * 300회인지 300레벨까지인지 정해지지 않는다. 꼬리표가 있어야 확실하다.
+ *
+ * "까지" 는 따로 뗀다. 예전에는 꼬리표가 문자열 맨 끝에 있어야만 걸려서
+ * "290렙까지" 처럼 자연스럽게 쓴 입력이 통째로 안내로 빠졌다.
  * 못 읽으면 null 을 준다 — 호출부가 안내를 띄운다.
  */
 function parseFarmAmount(text) {
-    const raw = String(text).trim();
-    const lower = raw.toLowerCase();
+    let body = String(text).trim();
+    let isTarget = false;
+
+    // "까지" 를 먼저 뗀다. "290렙까지" 는 이걸 떼야 "290렙" 이 보인다.
+    const untilStripped = stripSuffix(body, UNTIL_SUFFIX);
+    if(untilStripped !== null) {
+        body = untilStripped;
+        isTarget = true;
+    }
 
     for(let i = 0; i < LEVEL_SUFFIXES.length; i++) {
-        const suffix = LEVEL_SUFFIXES[i];
-        if(lower.length > suffix.length && lower.lastIndexOf(suffix) === lower.length - suffix.length) {
-            const head = raw.substring(0, raw.length - suffix.length).trim();
-            if(!/^\d+$/.test(head)) return null;
-            return { "mode": "target", "value": Number(head) };
+        const stripped = stripSuffix(body, LEVEL_SUFFIXES[i]);
+        if(stripped !== null) {
+            body = stripped;
+            isTarget = true;
+            break;
         }
     }
 
-    if(!/^\d+$/.test(raw)) return null;
-    return { "mode": "entries", "value": Number(raw) };
+    if(!isTarget) {
+        for(let i = 0; i < COUNT_SUFFIXES.length; i++) {
+            const stripped = stripSuffix(body, COUNT_SUFFIXES[i]);
+            if(stripped !== null) {
+                body = stripped;
+                break;
+            }
+        }
+    }
+
+    if(!/^\d+$/.test(body)) return null;
+    return { "mode": isTarget ? "target" : "entries", "value": Number(body) };
 }
 
 // Nexon OpenAPI 갱신 시간(0시~1시) 알림 메시지

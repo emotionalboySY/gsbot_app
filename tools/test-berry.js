@@ -49,11 +49,23 @@ console.log('\n▸ 목표 레벨 모드');
   check('닉네임 + 목표', call.endpoint.indexOf('/character/') >= 0 && call.params.target === '290');
 }
 
-console.log('\n▸ 접미사 7종');
+console.log('\n▸ 목표 꼬리표');
 {
-  for (const suffix of ['렙', '레벨', 'lv', 'Lv', 'LV', 'lV', 'level']) {
+  // "290렙까지" 처럼 자연스럽게 쓴 것도 받아야 한다. 예전에는 꼬리표가
+  // 문자열 맨 끝에 있어야만 걸려서 "까지" 가 붙으면 통째로 안내로 빠졌다.
+  const targets = ['렙', '레벨', 'lv', 'Lv', 'LV', 'lV', 'level', '까지',
+                   '렙까지', '레벨까지', 'lv까지', 'LV까지', 'level까지'];
+  for (const suffix of targets) {
     const { call } = run('/농장 290' + suffix);
-    check(`290${suffix}`, call && call.params.target === '290');
+    check(`290${suffix}`, call && call.params.target === '290' && call.params.entries === undefined);
+  }
+}
+
+console.log('\n▸ 횟수 꼬리표');
+{
+  for (const suffix of ['', '회', '번']) {
+    const { call } = run('/농장 30' + suffix);
+    check(`30${suffix || ' (없음)'}`, call && call.params.entries === '30' && call.params.target === undefined);
   }
 }
 
@@ -70,7 +82,8 @@ console.log('\n▸ 농장 이름과 같은 닉네임 — 닉네임으로 읽는�
 
 console.log('\n▸ 잘못된 입력은 API 를 부르지 않는다');
 {
-  for (const content of ['/농장', '/농장 abc', '/농장 렙290', '/농장 3.5', '/농장 베베 abc', '/농장 크림슨 베베 30']) {
+  for (const content of ['/농장', '/농장 abc', '/농장 렙290', '/농장 3.5', '/농장 베베 abc',
+                         '/농장 크림슨 베베 30', '/농장 까지', '/농장 렙까지', '/농장 290까지까지']) {
     const { call, reply } = run(content);
     check(`${content} → 안내`, !call && reply.length > 0, reply.split('\n')[0].slice(0, 30));
   }
