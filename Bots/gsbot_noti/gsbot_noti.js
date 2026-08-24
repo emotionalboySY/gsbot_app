@@ -69,6 +69,17 @@ const SILENCE_ALERT_MS = 30 * 60 * 1000;
 const QUIET_HOUR_END = 9;
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000;   // 같은 종류의 경보 재발송 간격
 
+// 누락 하나로는 경보를 올리지 않는다.
+//
+// 예전에는 한 건만 새도 "권한을 껐다 켜면 리스너가 다시 붙습니다" 라는 조치
+// 안내가 나갔다. 실제 빈도는 열흘에 한두 건이고(2026-08-13 ~ 08-21: 알림
+// 5,000건 중 진짜 누락 2건) 그때마다 리스너를 다시 붙일 일은 아니다. 조치가
+// 필요한 것은 짧은 시간에 여러 건이 몰릴 때다 — 리스너가 떨어지면 방을 가리지
+// 않고 한꺼번에 샌다. 단발은 경보 없이 기록에만 남기고, /알림진단 에는 그대로
+// 보인다.
+const MISSED_WINDOW_MS = 6 * 60 * 60 * 1000;
+const MISSED_BURST = 3;
+
 // ── 상태 ────────────────────────────────────────────────────────────────────
 // 재컴파일되면 이 파일은 처음부터 다시 돈다. 누적값은 Database 에 실어 나른다.
 const state = loadState();
@@ -95,6 +106,7 @@ function defaultState() {
         paired: 0,           // 알림과 메시지가 짝을 이룬 건수
         missedNoti: 0,       // 알림은 왔는데 메시지가 안 온 건수 → B 후보
         msgWithoutNoti: 0,   // 메시지는 왔는데 알림 기록이 없는 건수 (번들링 등)
+        recentMissed: [],    // 최근 누락 시각. 몰려서 나는지 보려고 창 안의 것만 남긴다
         lastNotiAt: 0,
         lastMsgAt: 0,
         byChannel: {},       // channelId → { room, noti, msg, missed }
@@ -267,11 +279,28 @@ function sweep() {
     }
 
     if (newMissed > 0) {
+        // 창 밖으로 나간 것은 버리고 방금 것을 넣는다.
+        const windowStart = nowMs() - MISSED_WINDOW_MS;
+        const recent = [];
+        for (let i = 0; i < state.recentMissed.length; i++) {
+            if (state.recentMissed[i] > windowStart) recent.push(state.recentMissed[i]);
+        }
+        for (let i = 0; i < newMissed; i++) recent.push(nowMs());
+        state.recentMissed = recent;
+
         // 어느 방인지 같이 싣는다. 방 이름 없이 숫자만 오면 매번 기록을 뒤져야 한다.
         const where = missedRooms.length > 0 ? "\n대상: " + missedRooms.join(", ") : "";
-        alert("missed",
-            `알림은 왔는데 봇이 못 받은 메시지 ${newMissed}건 (누적 ${state.missedNoti}건)${where}\n` +
-            "→ 원인 B. 알림 접근 권한을 껐다 켜면 리스너가 다시 붙습니다.");
+        const hours = Math.round(MISSED_WINDOW_MS / 3600000);
+
+        if (recent.length >= MISSED_BURST) {
+            alert("missed",
+                `알림은 왔는데 봇이 못 받은 메시지가 ${hours}시간 안에 ${recent.length}건입니다 ` +
+                `(누적 ${state.missedNoti}건)${where}\n` +
+                "→ 원인 B. 알림 접근 권한을 껐다 켜면 리스너가 다시 붙습니다.");
+        } else {
+            // 단발은 조용히 둔다. 기록에는 이미 남았고 /알림진단 에서 보인다.
+            Log.d(`누락 ${newMissed}건 (${hours}시간 내 ${recent.length}건) — 경보 기준 미만`);
+        }
     }
 
     // 모든 앱을 통틀어 알림이 오래 0건이면 리스너 자체가 떨어진 것으로 본다.
@@ -396,7 +425,23 @@ function verdict() {
         }
         return "알림이 한 건도 안 들어옴 — 리스너 언바인드 의심";
     }
-    if (state.missedNoti > 0) return "B (알림은 떴는데 봇이 못 받음) 사례 있음";
+    if (state.missedNoti > 0) {
+        // 같은 "1건" 이라도 열흘에 하나와 한 시간에 셋은 다른 이야기다.
+        // 비율과 최근 몰림을 같이 적어 둔다.
+        const rate = state.notiMessage > 0
+            ? (state.missedNoti / state.notiMessage * 100).toFixed(2)
+            : "?";
+        const windowStart = nowMs() - MISSED_WINDOW_MS;
+        let recent = 0;
+        for (let i = 0; i < state.recentMissed.length; i++) {
+            if (state.recentMissed[i] > windowStart) recent++;
+        }
+        const hours = Math.round(MISSED_WINDOW_MS / 3600000);
+        if (recent >= MISSED_BURST) {
+            return `B 사례가 ${hours}시간 안에 ${recent}건 — 리스너 재바인드 필요`;
+        }
+        return `B 사례 ${state.missedNoti}건 (메시지 알림의 ${rate}%) · 최근 ${hours}시간 ${recent}건 — 산발적`;
+    }
     if (state.notiMessage === 0) return "카톡 메시지 알림이 아직 없음 — 더 관측 필요";
     return "지금까지는 누락 없음";
 }

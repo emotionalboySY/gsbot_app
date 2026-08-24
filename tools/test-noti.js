@@ -65,6 +65,12 @@ function stateOf(bot) {
     return JSON.parse(bot.db['state.json']);
 }
 
+/** /알림진단 출력. 판정 문구를 보려고 관리자 자격으로 부른다. */
+function summaryOf(bot) {
+    const r = bot.send({ content: '/알림진단', isDebugRoom: true });
+    return r.replies.length ? r.replies[r.replies.length - 1].text : '';
+}
+
 console.log('\n▸ 카카오톡 알림 한 쌍은 메시지 알림 1건으로 센다');
 {
     const bot = newBot();
@@ -111,9 +117,39 @@ console.log('\n▸ 알림만 오고 메시지가 없으면 누락(B)으로 잡�
     const s = stateOf(bot);
     check('누락 1건', s.missedNoti, 1);
     check('방별 누락 1건', s.byChannel['111'].missed, 1);
-    check('관리자에게 경보 1건', bot.state.sent.length, 1);
-    check('경보 문구에 원인 B', /원인 B/.test(bot.state.sent[0].text), true);
-    check('어느 방인지 실림', /대상: 채널 111/.test(bot.state.sent[0].text), true);
+    // 단발은 경보를 올리지 않는다. 열흘에 한두 건이 실제 빈도라 그때마다
+    // 리스너를 다시 붙일 일이 아니다 — 기록에만 남기고 /알림진단 에서 본다.
+    check('단발이라 경보 없음', bot.state.sent.length, 0);
+    check('판정에는 산발적으로 표기', /산발적/.test(summaryOf(bot)), true);
+}
+
+console.log('\n▸ 짧은 시간에 몰리면 경보를 올린다');
+{
+    const bot = newBot();
+    // 창(6시간) 안에서 세 번 샌다 — 리스너가 떨어지면 이렇게 방을 가리지 않는다
+    for (const channelId of ['111', '222', '333']) {
+        kakaoPair(bot, channelId);
+        bot.advanceTime(30000);
+    }
+    const s = stateOf(bot);
+    check('누락 3건', s.missedNoti, 3);
+    check('관리자에게 경보', bot.state.sent.length >= 1, true);
+    const text = bot.state.sent.length ? bot.state.sent[bot.state.sent.length - 1].text : '';
+    check('경보 문구에 원인 B', /원인 B/.test(text), true);
+    check('어느 방인지 실림', /대상: /.test(text), true);
+    check('판정은 재바인드 필요', /재바인드 필요/.test(summaryOf(bot)), true);
+}
+
+console.log('\n▸ 창을 벗어난 누락은 몰림으로 세지 않는다');
+{
+    const bot = newBot();
+    kakaoPair(bot, '111');
+    bot.advanceTime(30000);
+    bot.advanceTime(7 * 60 * 60 * 1000);   // 6시간 창 밖으로 밀어낸다
+    kakaoPair(bot, '222');
+    bot.advanceTime(30000);
+    check('누락은 2건', stateOf(bot).missedNoti, 2);
+    check('창 안에는 1건뿐이라 경보 없음', bot.state.sent.length, 0);
 }
 
 console.log('\n▸ 답장 액션이 없는 알림(채널 광고)은 누락으로 세지 않는다');
