@@ -6,7 +6,9 @@ if (typeof TimeAlarmManager === 'undefined') {
         initialTimeoutId: null,
         lastNotifiedTime: null,
         notifications: [], // 알림 데이터 저장
-        dataLoadIntervalId: null // 데이터 로드 타이머 ID
+        lastLoadDay: null, // 마지막으로 로드에 성공한 KST 날짜 번호
+        lastLoadTryAt: 0, // 마지막 로드 시도 시각(ms). 실패 재시도 간격에 쓴다
+        dataLoadIntervalId: null // (구) 24시간 반복 타이머 ID. 남아 있으면 지운다
     };
 }
 
@@ -181,63 +183,59 @@ function fetchNotificationsFromEC2() {
     }
 }
 
-// 매일 00시 10분에 데이터 로드하는 함수
+// 매일 00시 10분(KST)에 데이터 로드
+//
+// 예전에는 다음 00:10 까지 setTimeout 을 걸고 그 뒤 24시간 setInterval 로
+// 돌렸는데, 기기가 절전에 들어가면 타이머 시계가 멈춰 날마다 로드가 늦어졌다
+// (서버 로그 실측: 00:10 → 01~02시 → 06~08시 → 09시대, 재컴파일하면 00:10 으로
+// 복귀). 그래서 긴 타이머를 쓰지 않는다. 30초마다 도는 알람 틱에서 실제
+// 시계(Date.now)로 "오늘 00:10 이 지났고 아직 오늘 로드를 안 했으면 로드" 한다.
+// 시각은 에폭 밀리초로만 계산해 엔진의 로컬 시간대에 기대지 않는다.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const LOAD_AT_MS = 10 * 60 * 1000; // 00:10
+const LOAD_RETRY_MS = 10 * 60 * 1000; // 실패하면 10분 뒤 다시
+
+// KST 기준 날짜 번호 (1970-01-01 KST 부터 며칠째)
+function kstDayIndex(ms) {
+    return Math.floor((ms + KST_OFFSET_MS) / DAY_MS);
+}
+
+function loadAndRemember(reason) {
+    const now = Date.now();
+    TimeAlarmManager.lastLoadTryAt = now;
+    const result = fetchNotificationsFromEC2();
+    if (result && result.success) {
+        TimeAlarmManager.lastLoadDay = kstDayIndex(now);
+        Log.i(reason + " 로드 완료: " + result.count + "개");
+    }
+    return result;
+}
+
+// 알람 틱마다 부른다. 오늘(KST) 00:10 이 지났는데 오늘 로드가 없으면 로드한다
+function maybeLoadForToday() {
+    const now = Date.now();
+    if ((now + KST_OFFSET_MS) % DAY_MS < LOAD_AT_MS) return;
+    if (TimeAlarmManager.lastLoadDay === kstDayIndex(now)) return;
+    if (now - TimeAlarmManager.lastLoadTryAt < LOAD_RETRY_MS) return;
+    Log.i("예약된 시간(00:10 KST)이 지나 데이터를 로드합니다.");
+    loadAndRemember("예약");
+}
+
 function scheduleDataLoad() {
-    // 스크립트 시작 시 즉시 한 번 로드
-    const initialResult = fetchNotificationsFromEC2();
-    if (initialResult.success) {
-        Log.i("초기 데이터 로드 완료: " + initialResult.count + "개");
-    }
-
-    function getMillisUntilNextLoad() {
-        const now = new Date();
-        const koreaOffset = 9 * 60;
-        const localOffset = now.getTimezoneOffset();
-        const koreaTime = new Date(now.getTime() + (koreaOffset + localOffset) * 60 * 1000);
-
-        const nextLoad = new Date(koreaTime);
-        nextLoad.setHours(0, 10, 0, 0);
-
-        // 이미 오늘 00시 10분이 지났다면 내일로 설정
-        if (koreaTime.getHours() > 0 || (koreaTime.getHours() === 0 && koreaTime.getMinutes() >= 10)) {
-            nextLoad.setDate(nextLoad.getDate() + 1);
-        }
-
-        return nextLoad.getTime() - koreaTime.getTime();
-    }
-
-    // 타이머가 이미 있으면 제거
+    // 예전 스크립트가 남긴 24시간 반복 타이머가 있으면 지운다
     if (TimeAlarmManager.dataLoadIntervalId) {
         clearInterval(TimeAlarmManager.dataLoadIntervalId);
         TimeAlarmManager.dataLoadIntervalId = null;
     }
-
-    const msUntilFirstLoad = getMillisUntilNextLoad();
-    const hoursUntil = Math.floor(msUntilFirstLoad / 1000 / 60 / 60);
-    const minutesUntil = Math.floor((msUntilFirstLoad / 1000 / 60) % 60);
-    Log.i(`다음 자동 데이터 로드까지 ${hoursUntil}시간 ${minutesUntil}분 대기합니다.`);
-
-    setTimeout(() => {
-        Log.i("예약된 시간(00:10)에 도달하여 데이터를 로드합니다.");
-        const result = fetchNotificationsFromEC2();
-        if (result.success) {
-            Log.i("예약 로드 완료: " + result.count + "개");
-        }
-
-        // 이후 24시간마다 반복
-        TimeAlarmManager.dataLoadIntervalId = setInterval(() => {
-            Log.i("예약된 시간(00:10)에 도달하여 데이터를 로드합니다.");
-            const result = fetchNotificationsFromEC2();
-            if (result.success) {
-                Log.i("예약 로드 완료: " + result.count + "개");
-            }
-        }, 24 * 60 * 60 * 1000); // 24시간
-
-    }, msUntilFirstLoad);
+    // 스크립트 시작 시 즉시 한 번 로드
+    loadAndRemember("초기 데이터");
 }
 
 function checkTimeAndNotify() {
     try {
+        maybeLoadForToday();
+
         const now = new Date();
 
         // 중복 알림 방지
