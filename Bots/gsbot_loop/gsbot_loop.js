@@ -4,7 +4,7 @@ if (typeof TimeAlarmManager === 'undefined') {
     var TimeAlarmManager = {
         intervalId: null,
         initialTimeoutId: null,
-        lastNotifiedTime: null,
+        lastCheckedMinute: null, // 마지막으로 판정한 분 (에폭 분 번호). 틱이 늦으면 그 다음 분부터 따라잡는다
         notifications: [], // 알림 데이터 저장
         lastLoadDay: null, // 마지막으로 로드에 성공한 KST 날짜 번호
         lastLoadTryAt: 0, // 마지막 로드 시도 시각(ms). 실패 재시도 간격에 쓴다
@@ -232,161 +232,157 @@ function scheduleDataLoad() {
     loadAndRemember("초기 데이터");
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 알림 판정
+//
+// 틱은 30초마다 돌지만 기기가 절전에 들어가면 타이머 시계가 멈춰 틱이 몇 분씩
+// 늦게 온다 — 로드 타이머에서 실측한 것과 같은 현상이다. 예전에는 "지금 분이
+// 알림 시각과 정확히 같으면" 보냈으므로 틱이 그 분을 건너뛰면 알림도 조용히
+// 사라졌다. 그래서 마지막으로 판정한 분을 기억해 두고, 틱마다 그 다음 분부터
+// 지금 분까지 차례로 판정한다. 틱이 늦어도 지나간 분의 알림을 따라잡아 보낸다.
+//
+// 다만 너무 오래 지난 알림은 보내지 않는다 — "잠시 후 패치" 를 한 시간 뒤에
+// 받으면 틀린 안내다. 그 경우는 관리자에게 무엇을 못 보냈는지 알린다.
+//
+// 시각은 에폭 분 번호로만 다루고 KST 달력 값은 UTC 게터에 9시간을 더해 얻는다.
+// 엔진의 로컬 시간대에 기대지 않는다.
+// ─────────────────────────────────────────────────────────────────────────────
+const MINUTE_MS = 60 * 1000;
+const CATCH_UP_MINUTES = 30;        // 이보다 오래 지난 알림은 보내지 않는다
+const SCAN_LIMIT_MINUTES = 24 * 60; // 못 보낸 알림을 세는 범위 상한
+
+const DAY_OF_WEEK_INDEX = {
+    '일': 0, 'sunday': 0, 'sun': 0,
+    '월': 1, 'monday': 1, 'mon': 1,
+    '화': 2, 'tuesday': 2, 'tue': 2,
+    '수': 3, 'wednesday': 3, 'wed': 3,
+    '목': 4, 'thursday': 4, 'thu': 4,
+    '금': 5, 'friday': 5, 'fri': 5,
+    '토': 6, 'saturday': 6, 'sat': 6
+};
+
+function currentMinute() {
+    return Math.floor(Date.now() / MINUTE_MS);
+}
+
+// 에폭 분 번호 → KST 달력 값
+function kstFieldsOf(minute) {
+    const d = new Date(minute * MINUTE_MS + KST_OFFSET_MS);
+    return {
+        year: d.getUTCFullYear(),
+        month: d.getUTCMonth() + 1,
+        day: d.getUTCDate(),
+        dayOfWeek: d.getUTCDay(),
+        hour: d.getUTCHours(),
+        minute: d.getUTCMinutes()
+    };
+}
+
+function kstClock(minute) {
+    const t = kstFieldsOf(minute);
+    return (t.hour < 10 ? "0" : "") + t.hour + ":" + (t.minute < 10 ? "0" : "") + t.minute;
+}
+
+function firstLineOf(message) {
+    return String(message).split("\n")[0].slice(0, 30);
+}
+
+// 알림이 그 분(KST 달력 값 t)에 나가야 하는가
+function isDueAt(n, t) {
+    if (n.hour === undefined || n.minute === undefined) return false;
+    if (n.hour !== t.hour || n.minute !== t.minute) return false;
+
+    // 1. 특정 날짜
+    if (n.year !== undefined && n.month !== undefined && n.day !== undefined) {
+        return n.year === t.year && n.month === t.month && n.day === t.day;
+    }
+    // 2. 요일
+    if (n.dayOfWeek !== undefined) {
+        return DAY_OF_WEEK_INDEX[String(n.dayOfWeek).toLowerCase()] === t.dayOfWeek;
+    }
+    // 3. 매일
+    return n.year === undefined && n.month === undefined && n.day === undefined;
+}
+
+// 방마다 보내고, 못 보낸 방 이름을 돌려준다. bot.send 는 그 방의 답장 가능한
+// 알림이 없으면 false 를 돌려주는데, 예전에는 그 값을 버려서 안 나간 줄을 몰랐다.
+function sendToRooms(message) {
+    const failed = [];
+    TARGET_ROOMS.forEach(roomName => {
+        if (bot.send(roomName, message)) return;
+        failed.push(roomName);
+    });
+    return failed;
+}
+
 function checkTimeAndNotify() {
     try {
         maybeLoadForToday();
 
-        const now = new Date();
-
-        // 중복 알림 방지
-        const currentMinute = now.getTime() - (now.getTime() % 60000);
-        if (TimeAlarmManager.lastNotifiedTime === currentMinute) {
+        const nowMinute = currentMinute();
+        const last = TimeAlarmManager.lastCheckedMinute;
+        // 같은 분의 두 번째 틱. 시계가 뒤로 간 경우도 여기서 기준을 다시 잡는다.
+        if (last !== null && last >= nowMinute) {
+            TimeAlarmManager.lastCheckedMinute = nowMinute;
             return;
         }
+        TimeAlarmManager.lastCheckedMinute = nowMinute;
 
-        // 알림 데이터가 없으면 종료
-        if (!TimeAlarmManager.notifications || TimeAlarmManager.notifications.length === 0) {
-            return;
+        const notifications = TimeAlarmManager.notifications;
+        if (!notifications || notifications.length === 0) return;
+
+        const from = last === null ? nowMinute : Math.max(last + 1, nowMinute - SCAN_LIMIT_MINUTES + 1);
+        const sendFrom = nowMinute - CATCH_UP_MINUTES + 1;
+
+        const skipped = [];
+        for (let minute = from; minute <= nowMinute; minute++) {
+            const t = kstFieldsOf(minute);
+            notifications.forEach(notification => {
+                try {
+                    if (!notification.message || !isDueAt(notification, t)) return;
+
+                    const label = kstClock(minute) + " " + firstLineOf(notification.message);
+                    if (minute < sendFrom) {
+                        skipped.push(label);
+                        return;
+                    }
+
+                    const delay = nowMinute - minute;
+                    Log.i("알림 전송" + (delay > 0 ? " (" + delay + "분 늦음)" : "") + ": " + label);
+                    const failed = sendToRooms(notification.message);
+                    if (failed.length > 0) {
+                        Log.e("알림을 보내지 못한 방: " + failed.join(" / "));
+                        bot.send(ADMIN_USERS[0], "알림을 보내지 못한 방: " + failed.join(" / ") + "\n" + label);
+                    }
+                } catch (e) {
+                    Log.e("개별 알림 처리 중 오류: " + e);
+                    bot.send(ADMIN_USERS[0], "개별 알림 처리 중 오류: " + e);
+                }
+            });
         }
 
-        // 모든 알림 데이터 확인
-        TimeAlarmManager.notifications.forEach(notification => {
-            try {
-                let shouldSend = false;
-
-                // 1. 특정 날짜와 시간 체크
-                if (notification.year !== undefined &&
-                    notification.month !== undefined &&
-                    notification.day !== undefined &&
-                    notification.hour !== undefined &&
-                    notification.minute !== undefined) {
-
-                    shouldSend = isExactDayAndTime(
-                        notification.year,
-                        notification.month,
-                        notification.day,
-                        notification.hour,
-                        notification.minute
-                    );
-
-                    if (shouldSend) {
-                        Log.d(`특정 날짜 알림 조건 충족: ${notification.year}-${notification.month}-${notification.day} ${notification.hour}:${notification.minute}`);
-                    }
-                }
-                // 2. 요일과 시간 체크
-                else if (notification.dayOfWeek !== undefined &&
-                    notification.hour !== undefined &&
-                    notification.minute !== undefined) {
-
-                    shouldSend = isExactDayOfWeekAndTime(
-                        notification.dayOfWeek,
-                        notification.hour,
-                        notification.minute
-                    );
-
-                    if (shouldSend) {
-                        Log.d(`요일 알림 조건 충족: ${notification.dayOfWeek}요일 ${notification.hour}:${notification.minute}`);
-                    }
-                }
-
-                // 3. 매일 특정 시간 체크 (DailyMessage) - 새로 추가된 부분
-                else if (notification.hour !== undefined &&
-                    notification.minute !== undefined &&
-                    notification.year === undefined &&
-                    notification.month === undefined &&
-                    notification.day === undefined &&
-                    notification.dayOfWeek === undefined) {
-
-                    shouldSend = isDailyTime(
-                        notification.hour,
-                        notification.minute
-                    );
-
-                    if (shouldSend) {
-                        Log.d(`매일 알림 조건 충족: 매일 ${notification.hour}:${notification.minute}`);
-                    }
-                }
-
-                // 조건이 맞으면 메시지 전송
-                if (shouldSend && notification.message) {
-                    TARGET_ROOMS.forEach(roomName => {
-                        bot.send(roomName, notification.message);
-                        Log.i(`'${roomName}' 방에 알림 전송: ${notification.message}`);
-                    });
-
-                    // 중복 알림 방지를 위해 시간 기록
-                    TimeAlarmManager.lastNotifiedTime = currentMinute;
-                }
-
-            } catch (e) {
-                Log.e("개별 알림 처리 중 오류: " + e);
-                bot.send("승엽[EmotionB_SY]", "개별 알림 처리 중 오류: " + e);
-            }
-        });
+        if (skipped.length > 0) {
+            const text = "알림 확인이 " + (nowMinute - last) + "분 멈춰 있어 지나간 알림 " + skipped.length + "개를 보내지 않았습니다.\n" + skipped.join("\n");
+            Log.e(text);
+            bot.send(ADMIN_USERS[0], text);
+        }
 
     } catch (e) {
         Log.e("시간 확인 및 알림 전송 중 오류 발생: " + e);
-        bot.send("승엽[EmotionB_SY]", "시간 확인 및 알림 전송 중 오류 발생: " + e);
+        bot.send(ADMIN_USERS[0], "시간 확인 및 알림 전송 중 오류 발생: " + e);
     }
-}
-
-
-function isExactDayAndTime(year, month, day, hour, minute) {
-    let now = new Date();
-
-    // UTC 시간을 한국 시간(+9시간)으로 변환
-    let koreaOffset = 9 * 60; // 한국은 UTC+9
-    let localOffset = now.getTimezoneOffset(); // 현재 로컬 타임존의 UTC 차이 (분)
-    let koreaTime = new Date(now.getTime() + (koreaOffset + localOffset) * 60 * 1000);
-
-    return koreaTime.getFullYear() === year &&
-        koreaTime.getMonth() === month - 1 && // getMonth()는 0부터 시작
-        koreaTime.getDate() === day &&
-        koreaTime.getHours() === hour &&
-        koreaTime.getMinutes() === minute;
-}
-
-function isExactDayOfWeekAndTime(dayName, hour, minute) {
-    const days = {
-        '일': 0, 'sunday': 0, 'sun': 0,
-        '월': 1, 'monday': 1, 'mon': 1,
-        '화': 2, 'tuesday': 2, 'tue': 2,
-        '수': 3, 'wednesday': 3, 'wed': 3,
-        '목': 4, 'thursday': 4, 'thu': 4,
-        '금': 5, 'friday': 5, 'fri': 5,
-        '토': 6, 'saturday': 6, 'sat': 6
-    };
-
-    // UTC 시간을 한국 시간(+9시간)으로 변환
-    let now = new Date();
-    let koreaOffset = 9 * 60; // 한국은 UTC+9
-    let localOffset = now.getTimezoneOffset(); // 현재 로컬 타임존의 UTC 차이 (분)
-    let koreaTime = new Date(now.getTime() + (koreaOffset + localOffset) * 60 * 1000);
-
-    let dayOfWeek = days[dayName.toLowerCase()];
-
-    return koreaTime.getDay() === dayOfWeek &&
-        koreaTime.getHours() === hour &&
-        koreaTime.getMinutes() === minute;
-}
-
-// 매일 특정 시간을 체크하는 함수 (새로 추가)
-function isDailyTime(hour, minute) {
-    let now = new Date();
-
-    // UTC 시간을 한국 시간(+9시간)으로 변환
-    let koreaOffset = 9 * 60; // 한국은 UTC+9
-    let localOffset = now.getTimezoneOffset(); // 현재 로컬 타임존의 UTC 차이 (분)
-    let koreaTime = new Date(now.getTime() + (koreaOffset + localOffset) * 60 * 1000);
-
-    return koreaTime.getHours() === hour &&
-        koreaTime.getMinutes() === minute;
 }
 
 function startSyncedAlarmService() {
     if (TimeAlarmManager.intervalId || TimeAlarmManager.initialTimeoutId) {
         Log.d("알람 서비스가 이미 실행 중이거나 예약되어 있습니다.");
         return;
+    }
+
+    // 컴파일된 분은 이전 컨텍스트가 이미 봤다. 여기서 기준을 잡아 두면 첫 틱이
+    // 절전으로 늦더라도 그 다음 분부터는 따라잡는다.
+    if (TimeAlarmManager.lastCheckedMinute === null) {
+        TimeAlarmManager.lastCheckedMinute = currentMinute();
     }
 
     const now = new Date();
@@ -404,17 +400,14 @@ function startSyncedAlarmService() {
     }, msUntilNextMinute);
 }
 
-// 현재 로드된 알림 정보를 확인하는 함수
+// 현재 로드된 알림 정보와 틱 상태
 function getNotificationInfo() {
-    if (!TimeAlarmManager.notifications || TimeAlarmManager.notifications.length === 0) {
-        return "현재 로드된 알림이 없습니다.";
-    }
-
     let exactCount = 0;
     let weeklyCount = 0;
     let dailyCount = 0;
 
-    TimeAlarmManager.notifications.forEach(n => {
+    const notifications = TimeAlarmManager.notifications || [];
+    notifications.forEach(n => {
         if (n.year !== undefined) {
             exactCount++;
         } else if (n.dayOfWeek !== undefined) {
@@ -424,7 +417,15 @@ function getNotificationInfo() {
         }
     });
 
-    return `현재 로드된 알림:\n- 정확한 시간: ${exactCount}개\n- 요일 시간: ${weeklyCount}개\n- 매일 시간: ${dailyCount}개\n- 총합: ${TimeAlarmManager.notifications.length}개`;
+    const last = TimeAlarmManager.lastCheckedMinute;
+    const tick = last === null ? "아직 없음" : kstClock(last) + " (" + (currentMinute() - last) + "분 전)";
+    const blocked = TARGET_ROOMS.filter(roomName => !bot.canReply(roomName));
+
+    const loaded = notifications.length === 0
+        ? "현재 로드된 알림이 없습니다."
+        : `현재 로드된 알림:\n- 정확한 시간: ${exactCount}개\n- 요일 시간: ${weeklyCount}개\n- 매일 시간: ${dailyCount}개\n- 총합: ${notifications.length}개`;
+
+    return `${loaded}\n\n마지막 확인: ${tick}\n답장 불가 방: ${blocked.length > 0 ? blocked.join(" / ") : "없음"}`;
 }
 
 // 서비스 시작
