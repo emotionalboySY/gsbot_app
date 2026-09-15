@@ -18,6 +18,16 @@ const FCM_API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com
 // 관리자 설정 (명령어를 사용할 수 있는 사용자)
 const ADMIN_USERS = ["승엽[EmotionB_SY]"]; // 관리자 이름 목록
 
+// 관리자 갠톡으로 보낸다. bot.send 는 그 방의 답장 가능한 카톡 알림이 없으면
+// false 를 돌려주는데, 예전에는 그 값을 버려서 안 나간 줄을 몰랐다 — 2026-09-10
+// 폰 재부팅으로 갠톡 알림이 사라진 뒤 닷새 동안 재로드 메시지가 조용히 증발했다.
+// 갠톡 알림은 관리자가 그 방에 새 메시지를 보내야 다시 생긴다.
+function notifyAdmin(text) {
+    if (bot.send(ADMIN_USERS[0], text)) return true;
+    Log.e("관리자 갠톡 전송 실패(답장 가능한 알림 없음): " + String(text).split("\n")[0].slice(0, 40));
+    return false;
+}
+
 bot.addListener(Event.START_COMPILE, () => {
     if (TimeAlarmManager.initialTimeoutId) {
         clearTimeout(TimeAlarmManager.initialTimeoutId);
@@ -143,7 +153,7 @@ function fetchNotificationsFromEC2() {
 
         const count = TimeAlarmManager.notifications.length;
         Log.i("EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.");
-        bot.send("승엽[EmotionB_SY]", "EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.");
+        notifyAdmin("EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.");
 
         // Flutter 앱에 알림 전송
         sendNotificationToFlutterApp(
@@ -352,11 +362,11 @@ function checkTimeAndNotify() {
                     const failed = sendToRooms(notification.message);
                     if (failed.length > 0) {
                         Log.e("알림을 보내지 못한 방: " + failed.join(" / "));
-                        bot.send(ADMIN_USERS[0], "알림을 보내지 못한 방: " + failed.join(" / ") + "\n" + label);
+                        notifyAdmin("알림을 보내지 못한 방: " + failed.join(" / ") + "\n" + label);
                     }
                 } catch (e) {
                     Log.e("개별 알림 처리 중 오류: " + e);
-                    bot.send(ADMIN_USERS[0], "개별 알림 처리 중 오류: " + e);
+                    notifyAdmin("개별 알림 처리 중 오류: " + e);
                 }
             });
         }
@@ -364,12 +374,12 @@ function checkTimeAndNotify() {
         if (skipped.length > 0) {
             const text = "알림 확인이 " + (nowMinute - last) + "분 멈춰 있어 지나간 알림 " + skipped.length + "개를 보내지 않았습니다.\n" + skipped.join("\n");
             Log.e(text);
-            bot.send(ADMIN_USERS[0], text);
+            notifyAdmin(text);
         }
 
     } catch (e) {
         Log.e("시간 확인 및 알림 전송 중 오류 발생: " + e);
-        bot.send(ADMIN_USERS[0], "시간 확인 및 알림 전송 중 오류 발생: " + e);
+        notifyAdmin("시간 확인 및 알림 전송 중 오류 발생: " + e);
     }
 }
 
