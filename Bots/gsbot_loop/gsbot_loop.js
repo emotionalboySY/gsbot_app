@@ -152,8 +152,8 @@ function fetchNotificationsFromEC2() {
 
 
         const count = TimeAlarmManager.notifications.length;
+        const summary = loadSummary(TimeAlarmManager.notifications);
         Log.i("EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.");
-        notifyAdmin("EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.");
 
         // Flutter 앱에 알림 전송
         sendNotificationToFlutterApp(
@@ -169,7 +169,7 @@ function fetchNotificationsFromEC2() {
         return {
             success: true,
             count: count,
-            message: "성공적으로 " + count + "개의 알림을 로드했습니다."
+            message: summary
         };
 
     } catch (e) {
@@ -211,6 +211,57 @@ function kstDayIndex(ms) {
     return Math.floor((ms + KST_OFFSET_MS) / DAY_MS);
 }
 
+// 알림 한 줄 — "2026년 9월 20일 21시 0분 - 이름". 이름이 없으면 본문 첫 줄
+const DAY_OF_WEEK_LABEL = {
+    '일': '일요일', 'sunday': '일요일', 'sun': '일요일',
+    '월': '월요일', 'monday': '월요일', 'mon': '월요일',
+    '화': '화요일', 'tuesday': '화요일', 'tue': '화요일',
+    '수': '수요일', 'wednesday': '수요일', 'wed': '수요일',
+    '목': '목요일', 'thursday': '목요일', 'thu': '목요일',
+    '금': '금요일', 'friday': '금요일', 'fri': '금요일',
+    '토': '토요일', 'saturday': '토요일', 'sat': '토요일'
+};
+
+function titleOf(n) {
+    const title = n.title ? String(n.title).trim() : "";
+    if (title) return title;
+    return String(n.message || "").split("\n")[0].trim().slice(0, 40) || "(내용 없음)";
+}
+
+function describeNotification(n) {
+    const when = n.hour + "시 " + n.minute + "분";
+    if (n.year !== undefined && n.month !== undefined && n.day !== undefined) {
+        return n.year + "년 " + n.month + "월 " + n.day + "일 " + when + " - " + titleOf(n);
+    }
+    if (n.dayOfWeek !== undefined) {
+        const label = DAY_OF_WEEK_LABEL[String(n.dayOfWeek).toLowerCase()] || String(n.dayOfWeek);
+        return "매주 " + label + " " + when + " - " + titleOf(n);
+    }
+    return "매일 " + when + " - " + titleOf(n);
+}
+
+// 정확한 날짜 → 요일 → 매일 순, 그 안에서는 시각 순
+function sortKey(n) {
+    if (n.year !== undefined) return [0, n.year, n.month, n.day, n.hour, n.minute];
+    if (n.dayOfWeek !== undefined) {
+        const dow = DAY_OF_WEEK_INDEX[String(n.dayOfWeek).toLowerCase()];
+        return [1, dow === undefined ? 9 : dow, 0, 0, n.hour, n.minute];
+    }
+    return [2, 0, 0, 0, n.hour, n.minute];
+}
+
+function loadSummary(notifications) {
+    const count = notifications.length;
+    const head = "EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.";
+    if (count === 0) return head;
+    const lines = notifications.slice().sort((a, b) => {
+        const ka = sortKey(a), kb = sortKey(b);
+        for (let i = 0; i < ka.length; i += 1) if (ka[i] !== kb[i]) return ka[i] - kb[i];
+        return 0;
+    }).map(describeNotification);
+    return head + "\n\n" + lines.join("\n");
+}
+
 function loadAndRemember(reason) {
     const now = Date.now();
     TimeAlarmManager.lastLoadTryAt = now;
@@ -218,6 +269,7 @@ function loadAndRemember(reason) {
     if (result && result.success) {
         TimeAlarmManager.lastLoadDay = kstDayIndex(now);
         Log.i(reason + " 로드 완료: " + result.count + "개");
+        notifyAdmin(result.message);
     }
     return result;
 }
@@ -477,6 +529,8 @@ function onMessage(msg) {
         } else {
             msg.reply("❌ " + result.message);
         }
+        // 수동 로드도 날짜를 기억해 같은 날 00:10 예약 로드가 한 번 더 돌지 않게 한다
+        if (result.success) TimeAlarmManager.lastLoadDay = kstDayIndex(Date.now());
     }
 
     // !알림확인 명령어
