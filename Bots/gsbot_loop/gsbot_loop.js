@@ -8,9 +8,12 @@ if (typeof TimeAlarmManager === 'undefined') {
         notifications: [], // 알림 데이터 저장
         lastLoadDay: null, // 마지막으로 로드에 성공한 KST 날짜 번호
         lastLoadTryAt: 0, // 마지막 로드 시도 시각(ms). 실패 재시도 간격에 쓴다
+        nextChangeAt: null, // 서버에 걸린 변경 예약 중 가장 이른 시각(ms). 지나면 다시 로드한다
         dataLoadIntervalId: null // (구) 24시간 반복 타이머 ID. 남아 있으면 지운다
     };
 }
+// 재컴파일하면 예전 스크립트가 만든 객체가 남는다. 뒤에 생긴 칸은 채워 둔다
+if (TimeAlarmManager.nextChangeAt === undefined) TimeAlarmManager.nextChangeAt = null;
 
 const TARGET_ROOMS = ["06-21", "집사 네 마리", "아케인 편안길드", "무친자들의 모임", "앙메톡", "그녀석의 재획교실"]; // 알림을 보낼 방 목록
 const EC2_API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api/intervalMessage/all"; // EC2 엔드포인트 URL
@@ -149,6 +152,7 @@ function fetchNotificationsFromEC2() {
             throw new Error("EC2 알림 데이터가 배열이 아니거나 null입니다");
         }
         TimeAlarmManager.notifications = parsed;
+        TimeAlarmManager.nextChangeAt = nextChangeAtOf(parsed);
 
 
         const count = TimeAlarmManager.notifications.length;
@@ -284,6 +288,33 @@ function maybeLoadForToday() {
     loadAndRemember("예약");
 }
 
+// 서버가 매일·매주 항목에 실어 주는 changeAt(변경 예약 시각) 중 가장 이른 것.
+// 예약이 없으면 null
+function nextChangeAtOf(notifications) {
+    let earliest = null;
+    notifications.forEach(n => {
+        if (!n.changeAt) return;
+        const at = Date.parse(n.changeAt);
+        if (isNaN(at)) return;
+        if (earliest === null || at < earliest) earliest = at;
+    });
+    return earliest;
+}
+
+// 변경 예약 시각이 지나면 다시 로드한다. 서버가 그때 본문을 바꿔 두므로 받아
+// 오기만 하면 된다. 서버와 시계가 어긋나 아직 안 바뀌었으면 changeAt 이 그대로
+// 돌아오고, 1분 뒤 다시 받는다.
+const CHANGE_RETRY_MS = 60 * 1000;
+
+function maybeReloadForChange() {
+    const now = Date.now();
+    const at = TimeAlarmManager.nextChangeAt;
+    if (at === null || now < at) return;
+    if (now - TimeAlarmManager.lastLoadTryAt < CHANGE_RETRY_MS) return;
+    Log.i("변경 예약 시각(" + kstStamp(at) + ")이 지나 데이터를 다시 로드합니다.");
+    loadAndRemember("변경 예약");
+}
+
 function scheduleDataLoad() {
     // 예전 스크립트가 남긴 24시간 반복 타이머가 있으면 지운다
     if (TimeAlarmManager.dataLoadIntervalId) {
@@ -345,6 +376,12 @@ function kstClock(minute) {
     return (t.hour < 10 ? "0" : "") + t.hour + ":" + (t.minute < 10 ? "0" : "") + t.minute;
 }
 
+// 에폭 밀리초 → "09-20 14:00" (KST)
+function kstStamp(ms) {
+    const t = kstFieldsOf(Math.floor(ms / MINUTE_MS));
+    return (t.month < 10 ? "0" : "") + t.month + "-" + (t.day < 10 ? "0" : "") + t.day + " " + kstClock(Math.floor(ms / MINUTE_MS));
+}
+
 function firstLineOf(message) {
     return String(message).split("\n")[0].slice(0, 30);
 }
@@ -380,6 +417,7 @@ function sendToRooms(message) {
 function checkTimeAndNotify() {
     try {
         maybeLoadForToday();
+        maybeReloadForChange();
 
         const nowMinute = currentMinute();
         const last = TimeAlarmManager.lastCheckedMinute;
@@ -487,7 +525,9 @@ function getNotificationInfo() {
         ? "현재 로드된 알림이 없습니다."
         : `현재 로드된 알림:\n- 정확한 시간: ${exactCount}개\n- 요일 시간: ${weeklyCount}개\n- 매일 시간: ${dailyCount}개\n- 총합: ${notifications.length}개`;
 
-    return `${loaded}\n\n마지막 확인: ${tick}\n답장 불가 방: ${blocked.length > 0 ? blocked.join(" / ") : "없음"}`;
+    const change = TimeAlarmManager.nextChangeAt === null ? "없음" : kstStamp(TimeAlarmManager.nextChangeAt);
+
+    return `${loaded}\n\n마지막 확인: ${tick}\n다음 변경 예약: ${change}\n답장 불가 방: ${blocked.length > 0 ? blocked.join(" / ") : "없음"}`;
 }
 
 // 서비스 시작
