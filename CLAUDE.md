@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Base URL: `https://botapi.maple-ing.com/api`
 - gsbot: JSoup (`Packages.org.jsoup.Jsoup`)으로 HTTP 통신
 - gsbot_loop: `java.net.URL` / `HttpURLConnection`으로 HTTP 통신
-- 인증: 쓰기와 알림·건의·정기 메시지 조회는 `X-Bot-Token` 헤더가 필요하다. 저장소가 공개라 토큰은 코드에 두지 않고 폰의 `Bots/<봇>/Database/bot_api_token.txt` 에 둔다. Database 가 봇별로 나뉘어 gsbot 과 gsbot_loop 에 각각 넣는다. `Http.request` 는 헤더를 실을 수 없어 일반 GET 은 토큰 없이 받는다.
+- 인증: 쓰기와 알림·건의·정기 메시지 조회는 `X-Bot-Token` 헤더가 필요하다. 저장소가 공개라 토큰은 코드에 두지 않고 폰의 `Bots/<봇>/Database/bot_api_token.txt` 에 둔다. Database 가 봇별로 나뉘어 gsbot, gsbot_loop, gsbot_noti 에 각각 넣는다. `Http.request` 는 헤더를 실을 수 없어 일반 GET 은 토큰 없이 받는다.
 
 ## 주요 패턴
 
