@@ -38,7 +38,22 @@
 //    이걸 세는 바람에 "카카오톡 선물하기" 채널의 광고가 매일 한 건씩 누락으로
 //    잡혔다. 2026-08-20 기준 누적 누락 10건 중 9건이 이것이었다.
 //
-// 이 봇은 기록만 한다. 카카오톡으로 나가는 것은 경보뿐이고 그마저 쿨다운이 있다.
+// 5. 메신저봇이 재시작된 뒤 리스너가 "붙어 있는데 아무것도 안 오는" 상태가 된다.
+//    dumpsys 로는 메신저봇이 Live listener 로 보이는데 onNotificationPosted 가
+//    한 번도 불리지 않는다. 앱 프로세스를 다시 띄워도 안 풀리고, 알림 접근 권한을
+//    껐다 켜야만 풀린다. 간헐적이다 (재시작 10번 중 2번: 09-10, 10-01).
+//      2026-10-01 14:44 정전 후 부팅 → 알림 0건이 36시간 → 10-03 권한 토글로 복구
+//    스크립트에서 고칠 수는 없었다 (2026-10-03 실험). 리스너 컴포넌트를
+//    disable → enable 하면 풀리기만 하고 다시 붙지 않으며, requestRebind() 는
+//    아무 반응이 없다. 할 수 있는 것은 빨리 알아채고 사람에게 알리는 것뿐이다.
+//
+//    그래서 알림이 한동안 없으면 봇이 자기 알림(프로브)을 하나 올려 본다.
+//    메신저봇 자신의 알림도 리스너로 들어오므로, 돌아오지 않으면 리스너가 죽은
+//    것이다. 경보는 카톡이 아니라 FCM 푸시로 보낸다 — 리스너가 죽으면 카톡
+//    답장 세션도 같이 끊겨 bot.send 가 나가지 못한다 (이번에 경보 72건이
+//    하나도 도착하지 않았다).
+//
+// 이 봇은 기록만 한다. 밖으로 나가는 것은 경보(푸시 + 카톡)뿐이고 그마저 쿨다운이 있다.
 // 실제 데이터는 EVENT_LOG 에 쌓이므로 adb 로 꺼내 본다.
 //
 //   adb shell cat /sdcard/msgbot/noti-diag/events.jsonl
@@ -61,13 +76,26 @@ const STATE_FILE = "state.json";           // 봇 전용 Database (재컴파일 
 const PAIR_GRACE_MS = 20 * 1000;
 const SWEEP_MS = 60 * 1000;                 // 짝 안 맞은 것 걷어내는 주기
 const SUMMARY_MS = 10 * 60 * 1000;          // 요약 적재 주기
-// 모든 앱을 통틀어 알림이 이 시간 동안 0건이면 리스너 언바인드를 의심한다.
-const SILENCE_ALERT_MS = 30 * 60 * 1000;
-// 심야에는 아무도 대화하지 않아 30분 침묵이 정상이다. 그대로 두면 경보가
-// 새벽에만 쏟아진다 — 2026-08-20 기준 51건 중 47건이 01~08시였다.
-// 이 시간대에는 경보를 올리지 않고, 낮이 된 뒤 흐른 시간만 침묵으로 센다.
-const QUIET_HOUR_END = 9;
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000;   // 같은 종류의 경보 재발송 간격
+
+// ── 리스너 생존 확인 (프로브) ──
+// 예전에는 "30분간 알림 0건" 으로 언바인드를 짐작했다. 새벽에는 그게 정상이라
+// 오탐이 쏟아졌고(2026-08-20 기준 51건 중 47건이 01~08시), 그래서 심야를 빼고
+// 셌더니 정작 밤사이 끊기면 아침 9시 반에야 알았다. 프로브는 시간대와 무관하다.
+const PACKAGE_SELF = "com.xfl.msgbot";
+const PROBE_TAG = "gsbot_noti-probe";
+const PROBE_ID = 7301;
+// 메신저봇이 만들어 둔 채널. 중요도 2(낮음)라 소리·진동 없이 잠깐 떴다 사라진다.
+const PROBE_CHANNEL = "com.xfl.msgbot.notification.compile_status";
+const PROBE_IDLE_MS = 10 * 60 * 1000;       // 알림이 이만큼 없으면 프로브를 쏜다
+const PROBE_TIMEOUT_MS = 15 * 1000;         // 이 안에 안 돌아오면 리스너가 죽은 것
+// 재시작 직후가 제일 위험하다(5번 항목). 컴파일되고 이만큼 뒤에 한 번 확인한다.
+const PROBE_AFTER_START_MS = 60 * 1000;
+// 리스너가 죽어 있는 동안 경보 재발송 간격. 사람이 폰을 만질 때까지 계속 운다.
+const DEAD_ALERT_COOLDOWN_MS = 2 * 60 * 60 * 1000;
+
+// 경보는 관리자 앱(Flutter)으로 FCM 푸시를 보낸다. gsbot_loop 와 같은 경로다.
+const FCM_API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api/fcm/send-all";
 
 // 누락 하나로는 경보를 올리지 않는다.
 //
@@ -91,6 +119,10 @@ const roomNames = {};   // channelId → 방 이름 (Event.MESSAGE 에서만 알
 
 let sweepTimer = null;
 let summaryTimer = null;
+let startProbeTimer = null;
+
+// 응답을 기다리는 프로브. 한 번에 하나만 띄운다.
+let pendingProbe = null;    // { sentAt, timer, reason }
 
 function nowMs() { return Date.now(); }
 
@@ -111,6 +143,10 @@ function defaultState() {
         lastMsgAt: 0,
         byChannel: {},       // channelId → { room, noti, msg, missed }
         alerts: {},          // 종류 → 마지막 발송 시각
+        lastProbeAt: 0,      // 마지막으로 프로브를 쏜 시각
+        lastProbeOkAt: 0,    // 마지막으로 프로브가 돌아온 시각
+        probeFailed: 0,      // 프로브가 안 돌아온 횟수 (누적)
+        listenerDeadSince: 0, // 리스너가 죽었다고 판정한 시각. 0 이면 살아 있음
     };
 }
 
@@ -198,35 +234,161 @@ function hasReplyAction(notification) {
 }
 
 /**
- * 경보 판단에 쓸 침묵 시간. 심야는 0 으로 본다.
- * 심야를 막 벗어났을 때는 낮이 된 뒤 흐른 시간까지만 센다 — 밤새 조용했다고
- * 아침 9시 정각에 경보가 터지면 그것도 거짓이다.
+ * 관리자 앱으로 FCM 푸시를 보낸다. 성공 여부만 돌려주고 예외는 삼킨다.
+ * data 값은 서버(FCM)가 문자열만 받는다.
  */
-function effectiveSilenceMs() {
-    const since = nowMs() - (state.lastNotiAt || state.startedAt);
+function sendPush(title, body, data) {
+    try {
+        const URL = Packages.java.net.URL;
+        const OutputStreamWriter = Packages.java.io.OutputStreamWriter;
 
-    const dayStart = new Date();
-    dayStart.setHours(QUIET_HOUR_END, 0, 0, 0);
-    const sinceDayStart = nowMs() - dayStart.getTime();
+        const connection = new URL(FCM_API_URL).openConnection();
+        connection.setRequestMethod("POST");
+        connection.setDoOutput(true);
+        connection.setConnectTimeout(10000);
+        connection.setReadTimeout(10000);
+        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
 
-    if (sinceDayStart < 0) return 0;          // 아직 심야다
-    return Math.min(since, sinceDayStart);
+        const writer = new OutputStreamWriter(connection.getOutputStream(), "UTF-8");
+        writer.write(JSON.stringify({ title: title, body: body, data: data || {} }));
+        writer.flush();
+        writer.close();
+
+        const code = connection.getResponseCode();
+        connection.disconnect();
+        if (code !== 200) Log.e("푸시 전송 실패: HTTP " + code);
+        return code === 200;
+    } catch (e) {
+        Log.e("푸시 전송 오류: " + e);
+        return false;
+    }
 }
 
-/** 같은 종류의 경보는 쿨다운 안에 다시 보내지 않는다. */
-function alert(kind, text) {
+/**
+ * 같은 종류의 경보는 쿨다운 안에 다시 보내지 않는다.
+ * 푸시가 주 경로다. 카톡(bot.send)은 리스너가 살아 있을 때만 닿으므로 덤으로 보낸다.
+ */
+function alert(kind, text, cooldownMs) {
     const last = state.alerts[kind] || 0;
-    if (nowMs() - last < ALERT_COOLDOWN_MS) return false;
+    if (nowMs() - last < (cooldownMs || ALERT_COOLDOWN_MS)) return false;
     state.alerts[kind] = nowMs();
     saveState();
 
-    logEvent("alert", { kind: kind, text: text });
+    const pushed = sendPush("[알림진단] " + kind, text, { type: "gsbot_noti", kind: kind });
+    let sent = false;
     try {
-        bot.send(ADMIN_NAME, "[알림진단] " + text);
+        sent = !!bot.send(ADMIN_NAME, "[알림진단] " + text);
     } catch (e) {
         Log.e("경보 전송 실패: " + e);
     }
+    logEvent("alert", { kind: kind, text: text, pushed: pushed, sent: sent });
     return true;
+}
+
+// ── 리스너 생존 확인 ─────────────────────────────────────────────────────────
+// 자기 알림을 하나 올리고 NOTIFICATION_POSTED 로 돌아오는지 본다.
+// 안드로이드 API 를 직접 부르는 곳은 여기 두 함수뿐이다.
+
+function notificationManager() {
+    const context = App.getContext();
+    return context.getSystemService(Packages.android.content.Context.NOTIFICATION_SERVICE);
+}
+
+function postProbeNotification() {
+    const context = App.getContext();
+    const notification = new Packages.android.app.Notification.Builder(context, PROBE_CHANNEL)
+        .setSmallIcon(Packages.android.R.drawable.stat_notify_sync)
+        .setContentTitle("알림 리스너 확인")
+        .setOnlyAlertOnce(true)
+        .setTimeoutAfter(PROBE_TIMEOUT_MS)   // 못 지우고 끝나도 알아서 사라진다
+        .build();
+    notificationManager().notify(PROBE_TAG, PROBE_ID, notification);
+}
+
+function cancelProbeNotification() {
+    try {
+        notificationManager().cancel(PROBE_TAG, PROBE_ID);
+    } catch (e) {
+        Log.e("프로브 알림 정리 실패: " + e);
+    }
+}
+
+function isProbe(sbn) {
+    return String(sbn.getPackageName()) === PACKAGE_SELF && String(sbn.getTag()) === PROBE_TAG;
+}
+
+/** 프로브를 쏜다. 이미 기다리는 중이면 아무것도 안 한다. */
+function startProbe(reason) {
+    if (pendingProbe) return false;
+    try {
+        postProbeNotification();
+    } catch (e) {
+        // 알림을 못 올린 것은 리스너 탓이 아니다. 판정하지 않는다.
+        Log.e("프로브 알림을 올리지 못했습니다: " + e);
+        logEvent("probeError", { reason: reason, error: String(e) });
+        return false;
+    }
+    state.lastProbeAt = nowMs();
+    pendingProbe = {
+        sentAt: nowMs(),
+        reason: reason,
+        timer: setTimeout(onProbeTimeout, PROBE_TIMEOUT_MS),
+    };
+    return true;
+}
+
+function onProbeTimeout() {
+    if (!pendingProbe) return;
+    const probe = pendingProbe;
+    pendingProbe = null;
+    cancelProbeNotification();
+
+    state.probeFailed++;
+    if (!state.listenerDeadSince) state.listenerDeadSince = probe.sentAt;
+    logEvent("probeFailed", {
+        reason: probe.reason,
+        deadSince: state.listenerDeadSince,
+        lastNotiAt: state.lastNotiAt,
+        device: deviceSnapshot(),
+    });
+
+    const silentMin = Math.round((nowMs() - (state.lastNotiAt || state.startedAt)) / 60000);
+    alert("dead",
+        `알림 리스너가 끊겼습니다 — 봇이 카톡을 못 받고 있습니다 (마지막 알림 ${silentMin}분 전)\n` +
+        "→ 설정 > 애플리케이션 > 특별한 접근 > 알림 읽기, 답장 및 제어 > 메신저봇 끄고 다시 켜기",
+        DEAD_ALERT_COOLDOWN_MS);
+    saveState();
+}
+
+/** 리스너로 무엇이든 들어왔다 = 살아 있다. 죽었다고 봤던 상태면 복구로 기록한다. */
+function markListenerAlive(via) {
+    if (!state.listenerDeadSince) return;
+    const downMin = Math.round((nowMs() - state.listenerDeadSince) / 60000);
+    logEvent("listenerRecovered", { via: via, deadSince: state.listenerDeadSince, downMin: downMin });
+    state.listenerDeadSince = 0;
+    state.alerts.dead = 0;      // 다음에 또 끊기면 바로 알린다
+    saveState();
+    // 리스너 콜백 안에서 네트워크를 타지 않는다. 다른 알림 처리가 밀린다.
+    setTimeout(function () {
+        sendPush("[알림진단] 복구", `알림 리스너가 다시 붙었습니다 (${downMin}분간 끊김)`,
+            { type: "gsbot_noti", kind: "recovered" });
+    }, 0);
+}
+
+function onProbeReturned() {
+    if (pendingProbe) {
+        clearTimeout(pendingProbe.timer);
+        pendingProbe = null;
+    }
+    cancelProbeNotification();
+    state.lastProbeOkAt = nowMs();
+    markListenerAlive("probe");
+}
+
+/** 알림이 한동안 없었고 최근에 확인한 적도 없으면 프로브를 쏜다. */
+function probeIfIdle() {
+    const lastSign = Math.max(state.lastNotiAt, state.lastProbeAt, state.startedAt);
+    if (nowMs() - lastSign >= PROBE_IDLE_MS) startProbe("idle");
 }
 
 // ── 짝 맞추기 ────────────────────────────────────────────────────────────────
@@ -303,13 +465,8 @@ function sweep() {
         }
     }
 
-    // 모든 앱을 통틀어 알림이 오래 0건이면 리스너 자체가 떨어진 것으로 본다.
-    const silence = effectiveSilenceMs();
-    if (silence > SILENCE_ALERT_MS) {
-        alert("silence",
-            `${Math.round(silence / 60000)}분간 알림이 한 건도 없습니다 — 리스너 언바인드 의심\n` +
-            `noti=${state.notiTotal} msg=${state.msgTotal}`);
-    }
+    // 알림이 끊긴 게 조용해서인지 리스너가 죽어서인지는 프로브로 가린다.
+    probeIfIdle();
 
     saveState();
 }
@@ -318,8 +475,18 @@ function sweep() {
 
 bot.addListener(Event.NOTIFICATION_POSTED, function (sbn) {
     try {
+        // 메신저봇 자신의 알림은 통계에 넣지 않는다. lastNotiAt 도 건드리지 않는다 —
+        // 그래야 다음 확인 시점이 "진짜 알림이 마지막으로 온 때" 기준으로 잡힌다.
+        // 프로브를 올리면 안드로이드가 메신저봇 알림을 자동으로 묶으면서 그룹 요약을
+        // 하나 더 올리는데(실측 2026-10-03), 그것도 여기서 걸러진다.
+        if (String(sbn.getPackageName()) === PACKAGE_SELF) {
+            if (isProbe(sbn)) onProbeReturned();
+            return;
+        }
+
         state.notiTotal++;
         state.lastNotiAt = nowMs();
+        markListenerAlive("notification");
 
         if (String(sbn.getPackageName()) !== KAKAO_PACKAGE) return;
         state.notiKakao++;
@@ -363,6 +530,7 @@ bot.addListener(Event.MESSAGE, function (msg) {
 
         state.msgTotal++;
         state.lastMsgAt = nowMs();
+        markListenerAlive("message");
         channelStat(channelId).msg++;
         pair(msgQueue, notiQueue, channelId, { t: nowMs() });
 
@@ -391,6 +559,8 @@ function summaryText() {
             ` + 답장불가 ${state.notiNoReply} + 메시지 ${state.notiMessage})`,
         `Event.MESSAGE ${state.msgTotal} · 짝 맞음 ${state.paired}`,
         `누락 의심(알림 O·메시지 X) ${state.missedNoti} · 알림 없이 온 메시지 ${state.msgWithoutNoti}`,
+        `리스너 ${state.listenerDeadSince ? "끊김(" + sinceText(state.listenerDeadSince) + "부터)" : "정상"}` +
+            ` · 프로브 확인 ${sinceText(state.lastProbeOkAt)} · 프로브 실패 누적 ${state.probeFailed}`,
     ];
 
     const channels = [];
@@ -416,14 +586,15 @@ function summaryText() {
 }
 
 function verdict() {
+    if (state.listenerDeadSince) {
+        return "리스너 끊김 (프로브 미응답) — 알림 접근 권한을 껐다 켜야 함";
+    }
     // 막 띄운 직후에는 알림이 0건인 게 정상이다. 그걸 언바인드로 부르면
-    // 재컴파일할 때마다 거짓 경보처럼 읽힌다.
+    // 재컴파일할 때마다 거짓 경보처럼 읽힌다. 살아 있는지는 프로브가 말해 준다.
     if (state.notiTotal === 0) {
-        const observedMs = nowMs() - state.startedAt;
-        if (observedMs < SILENCE_ALERT_MS) {
-            return `관측 ${Math.round(observedMs / 60000)}분 · 아직 판단할 데이터 없음`;
-        }
-        return "알림이 한 건도 안 들어옴 — 리스너 언바인드 의심";
+        const observedMin = Math.round((nowMs() - state.startedAt) / 60000);
+        if (state.lastProbeOkAt) return `관측 ${observedMin}분 · 알림은 아직 없지만 리스너는 살아 있음`;
+        return `관측 ${observedMin}분 · 아직 판단할 데이터 없음`;
     }
     if (state.missedNoti > 0) {
         // 같은 "1건" 이라도 열흘에 하나와 한 시간에 셋은 다른 이야기다.
@@ -479,11 +650,23 @@ bot.addListener(Event.START_COMPILE, function () {
     // 재컴파일 때 정리하지 않으면 타이머가 겹쳐서 돈다.
     if (sweepTimer) { clearInterval(sweepTimer); sweepTimer = null; }
     if (summaryTimer) { clearInterval(summaryTimer); summaryTimer = null; }
+    if (startProbeTimer) { clearTimeout(startProbeTimer); startProbeTimer = null; }
+    if (pendingProbe) {
+        clearTimeout(pendingProbe.timer);
+        pendingProbe = null;
+        cancelProbeNotification();
+    }
     saveState();
     Log.d("컴파일 시작: 진단 타이머를 정리했습니다.");
 });
 
 sweepTimer = setInterval(sweep, SWEEP_MS);
+// 재시작 직후 리스너가 죽은 채로 붙는 경우가 있다(머리말 5번). 알림이 오기를
+// 기다리지 않고 곧바로 확인한다.
+startProbeTimer = setTimeout(function () {
+    startProbeTimer = null;
+    startProbe("start");
+}, PROBE_AFTER_START_MS);
 summaryTimer = setInterval(function () {
     logEvent("summary", {
         notiTotal: state.notiTotal,

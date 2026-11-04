@@ -34,9 +34,78 @@ function notification(opts) {
     };
 }
 
-// KST 기준 시각으로 봇을 띄운다. 침묵 경보가 시간대를 보기 때문에 필요하다.
-function kstBot(month, day, hour, minute) {
-    return newBot(Date.UTC(2026, month - 1, day, hour - 9, minute || 0, 0));
+/** 메신저봇이 올린 프로브 알림이 리스너로 돌아온 모양 */
+function probeNotification() {
+    return {
+        getPackageName: () => 'com.xfl.msgbot',
+        getTag: () => 'gsbot_noti-probe',
+        getId: () => 7301,
+        getNotification: () => ({ flags: 0, actions: null }),
+    };
+}
+
+/**
+ * 프로브와 푸시가 부르는 안드로이드·자바 API 를 채운 봇.
+ * 올린 알림, 지운 알림, 보낸 푸시를 bot.android 에 모은다.
+ */
+function androidBot(now) {
+    const bot = newBot(now);
+    const android = { posted: [], cancelled: [], pushes: [] };
+    bot.android = android;
+
+    const manager = {
+        notify(tag, id) { android.posted.push({ tag: String(tag), id }); },
+        cancel(tag, id) { android.cancelled.push({ tag: String(tag), id }); },
+    };
+    bot.sandbox.App.getContext = () => ({ getSystemService: () => manager, startActivity() {} });
+
+    const P = bot.sandbox.Packages;
+    P.android.content.Context = { NOTIFICATION_SERVICE: 'notification' };
+    P.android.R = { drawable: { stat_notify_sync: 1 } };
+    P.android.app = {
+        Notification: {
+            Builder: function Builder() {
+                const b = {};
+                for (const m of ['setSmallIcon', 'setContentTitle', 'setOnlyAlertOnce', 'setTimeoutAfter']) b[m] = () => b;
+                b.build = () => ({});
+                return b;
+            },
+        },
+    };
+    P.java.net.URL = function URL(url) {
+        this.openConnection = () => {
+            const conn = { body: '' };
+            for (const m of ['setRequestMethod', 'setDoOutput', 'setConnectTimeout', 'setReadTimeout', 'setRequestProperty', 'disconnect']) conn[m] = () => {};
+            conn.getOutputStream = () => conn;
+            conn.getResponseCode = () => { android.pushes.push({ url: String(url), body: JSON.parse(conn.body) }); return 200; };
+            return conn;
+        };
+    };
+    P.java.io = {
+        OutputStreamWriter: function OutputStreamWriter(stream) {
+            this.write = (s) => { stream.body += s; };
+            this.flush = () => {};
+            this.close = () => {};
+        },
+    };
+    return bot;
+}
+
+/** 지연 시간이 ms 인 setTimeout 을 하나 꺼내 돌린다. 하니스는 타이머를 자동으로 돌리지 않는다. */
+function fireTimeout(bot, ms) {
+    for (const id in bot.state.timers) {
+        const timer = bot.state.timers[id];
+        if (timer.kind === 'timeout' && timer.ms === ms) {
+            delete bot.state.timers[id];
+            timer.fn();
+            return true;
+        }
+    }
+    return false;
+}
+
+function hasTimeout(bot, ms) {
+    return Object.values(bot.state.timers).some((t) => t.kind === 'timeout' && t.ms === ms);
 }
 
 /** 카카오톡이 실제로 올리는 한 쌍: 묶음 요약 + 진짜 메시지 알림 */
@@ -166,33 +235,98 @@ console.log('\n▸ 답장 액션이 없는 알림(채널 광고)은 누락으로
     check('경보 없음', bot.state.sent.length, 0);
 }
 
-console.log('\n▸ 심야에는 침묵 경보를 올리지 않는다');
+console.log('\n▸ 재시작 1분 뒤 프로브를 쏘고, 돌아오면 정상');
 {
-    const bot = kstBot(8, 20, 5, 0);       // 05:00 KST
-    bot.advanceTime(40 * 60 * 1000);        // 40분간 알림 0건
-    bot.fireTimers('interval');
-    check('경보 없음', bot.state.sent.length, 0);
+    const bot = androidBot();
+    fireTimeout(bot, 60 * 1000);
+    check('프로브 알림 1건 올림', bot.android.posted.length, 1);
+    check('응답 대기 타이머 등록', hasTimeout(bot, 15 * 1000), true);
+
+    bot.emit('notificationPosted', probeNotification());
+    const s = stateOf(bot);
+    check('대기 타이머 해제', hasTimeout(bot, 15 * 1000), false);
+    check('프로브 알림 지움', bot.android.cancelled.length, 1);
+    check('확인 시각 기록', s.lastProbeOkAt > 0, true);
+    check('리스너 정상', s.listenerDeadSince, 0);
+    check('프로브는 통계에 안 들어감', s.notiTotal, 0);
+    check('푸시 없음', bot.android.pushes.length, 0);
+
+    // 프로브를 올리면 안드로이드가 메신저봇 알림을 묶으며 그룹 요약을 더 올린다
+    bot.emit('notificationPosted', notification({ pkg: 'com.xfl.msgbot', tag: null, flags: FLAG_GROUP_SUMMARY }));
+    check('메신저봇 자신의 알림도 통계에 안 들어감', stateOf(bot).notiTotal, 0);
 }
 
-console.log('\n▸ 낮에 40분간 알림이 없으면 침묵 경보가 나간다');
+console.log('\n▸ 프로브가 안 돌아오면 리스너 끊김 — 푸시로 알린다');
 {
-    const bot = kstBot(8, 20, 12, 0);      // 12:00 KST
-    bot.advanceTime(40 * 60 * 1000);
-    bot.fireTimers('interval');
-    check('경보 1건', bot.state.sent.length, 1);
-    check('언바인드 의심 문구', /리스너 언바인드 의심/.test(bot.state.sent[0].text), true);
+    const bot = androidBot();
+    fireTimeout(bot, 60 * 1000);
+    fireTimeout(bot, 15 * 1000);
+    const s = stateOf(bot);
+    check('끊김 판정', s.listenerDeadSince > 0, true);
+    check('실패 누적 1', s.probeFailed, 1);
+    check('푸시 1건', bot.android.pushes.length, 1);
+    const push = bot.android.pushes[0] || { body: {} };
+    check('푸시 종류 dead', push.body.data && push.body.data.kind, 'dead');
+    check('조치 안내 포함', /알림 읽기, 답장 및 제어/.test(push.body.body), true);
+    check('FCM 경로', /\/api\/fcm\/send-all$/.test(push.url), true);
+    check('판정은 리스너 끊김', /리스너 끊김/.test(summaryOf(bot)), true);
 }
 
-console.log('\n▸ 밤새 조용했다고 아침 9시에 바로 터지지는 않는다');
+console.log('\n▸ 끊긴 동안 10분마다 다시 확인하되 푸시는 2시간에 한 번');
 {
-    const bot = kstBot(8, 20, 8, 50);      // 08:50 KST — 아직 심야
-    bot.advanceTime(25 * 60 * 1000);        // 09:15 · 낮이 된 지 15분
-    bot.fireTimers('interval');
-    check('아직 경보 없음', bot.state.sent.length, 0);
+    const bot = androidBot();
+    fireTimeout(bot, 60 * 1000);
+    fireTimeout(bot, 15 * 1000);
 
-    bot.advanceTime(20 * 60 * 1000);        // 09:35 · 낮이 된 지 35분
+    bot.advanceTime(10 * 60 * 1000);
     bot.fireTimers('interval');
-    check('그 뒤에는 경보', bot.state.sent.length, 1);
+    check('다시 프로브', bot.android.posted.length, 2);
+    fireTimeout(bot, 15 * 1000);
+    check('쿨다운이라 푸시 그대로 1건', bot.android.pushes.length, 1);
+
+    bot.advanceTime(2 * 60 * 60 * 1000);
+    bot.fireTimers('interval');
+    fireTimeout(bot, 15 * 1000);
+    check('2시간 뒤에는 다시 푸시', bot.android.pushes.length, 2);
+}
+
+console.log('\n▸ 끊긴 뒤 알림이 다시 들어오면 복구로 기록하고 알린다');
+{
+    const bot = androidBot();
+    fireTimeout(bot, 60 * 1000);
+    fireTimeout(bot, 15 * 1000);
+    bot.advanceTime(30 * 60 * 1000);
+
+    kakaoPair(bot, '111');
+    fireTimeout(bot, 0);      // 복구 푸시는 리스너 콜백 밖에서 보낸다
+    const s = stateOf(bot);
+    check('리스너 정상으로', s.listenerDeadSince, 0);
+    check('복구 푸시', bot.android.pushes.map((p) => p.body.data.kind), ['dead', 'recovered']);
+    check('복구 기록', /"type":"listenerRecovered"/.test(bot.state.files['/sdcard/msgbot/noti-diag/events.jsonl']), true);
+}
+
+console.log('\n▸ 알림이 계속 들어오는 동안은 프로브를 쏘지 않는다');
+{
+    const bot = androidBot();
+    bot.advanceTime(9 * 60 * 1000);
+    kakaoPair(bot, '111');
+    bot.advanceTime(9 * 60 * 1000);   // 시작 후 18분이지만 마지막 알림은 9분 전
+    bot.fireTimers('interval');
+    check('프로브 없음', bot.android.posted.length, 0);
+
+    bot.advanceTime(2 * 60 * 1000);   // 마지막 알림이 11분 전
+    bot.fireTimers('interval');
+    check('10분 넘게 조용하면 프로브', bot.android.posted.length, 1);
+}
+
+console.log('\n▸ 프로브 알림을 못 올리면 끊김으로 판정하지 않는다');
+{
+    const bot = newBot();             // 안드로이드 API 가 없는 상태
+    fireTimeout(bot, 60 * 1000);
+    const s = stateOf(bot);
+    check('대기 타이머 없음', hasTimeout(bot, 15 * 1000), false);
+    check('리스너 정상 유지', s.listenerDeadSince, 0);
+    check('오류는 기록', /"type":"probeError"/.test(bot.state.files['/sdcard/msgbot/noti-diag/events.jsonl']), true);
 }
 
 console.log('\n▸ 카카오톡이 아닌 알림은 전체 수만 올린다');
@@ -265,7 +399,8 @@ console.log('\n▸ 재컴파일 시 타이머 정리 · 누적값 인수인계')
 {
     const bot = newBot();
     kakaoPair(bot, '111');
-    check('타이머 2개 등록', Object.keys(bot.state.timers).length, 2);
+    // sweep · 요약 · 시작 직후 프로브
+    check('타이머 3개 등록', Object.keys(bot.state.timers).length, 3);
     bot.emit('startCompile');
     check('타이머 정리됨', Object.keys(bot.state.timers).length, 0);
 
@@ -275,6 +410,16 @@ console.log('\n▸ 재컴파일 시 타이머 정리 · 누적값 인수인계')
         database: { 'state.json': bot.db['state.json'] },
     });
     check('메시지 알림 누적 인수인계', stateOf(restarted).notiMessage, 1);
+}
+
+console.log('\n▸ 재컴파일 때 응답 대기 중인 프로브도 정리한다');
+{
+    const bot = androidBot();
+    fireTimeout(bot, 60 * 1000);
+    check('응답 대기 중', hasTimeout(bot, 15 * 1000), true);
+    bot.emit('startCompile');
+    check('대기 타이머 정리', hasTimeout(bot, 15 * 1000), false);
+    check('프로브 알림 지움', bot.android.cancelled.length, 1);
 }
 
 console.log(`\n${failed === 0 ? '전부 통과' : failed + '건 실패'}\n`);
