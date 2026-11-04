@@ -95,7 +95,10 @@ const PROBE_AFTER_START_MS = 60 * 1000;
 const DEAD_ALERT_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 
 // 경보는 관리자 앱(Flutter)으로 FCM 푸시를 보낸다. gsbot_loop 와 같은 경로다.
-const FCM_API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api/fcm/send-all";
+const FCM_API_URL = "https://botapi.maple-ing.com/api/fcm/send-all";
+// 봇 서버 토큰. 저장소가 공개라 코드에 두지 않고 폰의 Database 에만 둔다.
+// Database 는 봇별로 나뉘어 gsbot, gsbot_loop 와 따로 넣어야 한다. 파일이 없으면 헤더 없이 보낸다.
+const BOT_API_TOKEN_FILE = "bot_api_token.txt";
 
 // 누락 하나로는 경보를 올리지 않는다.
 //
@@ -233,6 +236,17 @@ function hasReplyAction(notification) {
     }
 }
 
+function setBotToken(connection) {
+    try {
+        if (Database.exists(BOT_API_TOKEN_FILE)) {
+            const token = String(Database.readString(BOT_API_TOKEN_FILE) || "").trim();
+            if (token) connection.setRequestProperty("X-Bot-Token", token);
+        }
+    } catch (e) {
+        Log.e("봇 서버 토큰을 읽지 못했습니다: " + e);
+    }
+}
+
 /**
  * 관리자 앱으로 FCM 푸시를 보낸다. 성공 여부만 돌려주고 예외는 삼킨다.
  * data 값은 서버(FCM)가 문자열만 받는다.
@@ -248,6 +262,7 @@ function sendPush(title, body, data) {
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(10000);
         connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+        setBotToken(connection);
 
         const writer = new OutputStreamWriter(connection.getOutputStream(), "UTF-8");
         writer.write(JSON.stringify({ title: title, body: body, data: data || {} }));

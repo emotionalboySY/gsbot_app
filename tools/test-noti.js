@@ -48,8 +48,8 @@ function probeNotification() {
  * 프로브와 푸시가 부르는 안드로이드·자바 API 를 채운 봇.
  * 올린 알림, 지운 알림, 보낸 푸시를 bot.android 에 모은다.
  */
-function androidBot(now) {
-    const bot = newBot(now);
+function androidBot(now, database) {
+    const bot = newBot(now, database);
     const android = { posted: [], cancelled: [], pushes: [] };
     bot.android = android;
 
@@ -74,10 +74,11 @@ function androidBot(now) {
     };
     P.java.net.URL = function URL(url) {
         this.openConnection = () => {
-            const conn = { body: '' };
-            for (const m of ['setRequestMethod', 'setDoOutput', 'setConnectTimeout', 'setReadTimeout', 'setRequestProperty', 'disconnect']) conn[m] = () => {};
+            const conn = { body: '', headers: {} };
+            for (const m of ['setRequestMethod', 'setDoOutput', 'setConnectTimeout', 'setReadTimeout', 'disconnect']) conn[m] = () => {};
+            conn.setRequestProperty = (name, value) => { conn.headers[name] = value; };
             conn.getOutputStream = () => conn;
-            conn.getResponseCode = () => { android.pushes.push({ url: String(url), body: JSON.parse(conn.body) }); return 200; };
+            conn.getResponseCode = () => { android.pushes.push({ url: String(url), headers: conn.headers, body: JSON.parse(conn.body) }); return 200; };
             return conn;
         };
     };
@@ -121,8 +122,8 @@ function check(name, actual, expected) {
     console.log(`${ok ? '  OK ' : '  실패'} ${name}${ok ? '' : `\n       기대 ${JSON.stringify(expected)}\n       실제 ${JSON.stringify(actual)}`}`);
 }
 
-function newBot(now) {
-    return loadBot({ source: require('fs').readFileSync(NOTI_SOURCE, 'utf8'), now });
+function newBot(now, database) {
+    return loadBot({ source: require('fs').readFileSync(NOTI_SOURCE, 'utf8'), now, database });
 }
 
 /**
@@ -420,6 +421,26 @@ console.log('\n▸ 재컴파일 때 응답 대기 중인 프로브도 정리한�
     bot.emit('startCompile');
     check('대기 타이머 정리', hasTimeout(bot, 15 * 1000), false);
     check('프로브 알림 지움', bot.android.cancelled.length, 1);
+}
+
+console.log('\n▸ 경보 푸시는 HTTPS 주소로 토큰을 실어 보낸다');
+{
+    const bot = androidBot(undefined, { 'bot_api_token.txt': 'token-for-test\n' });
+    fireTimeout(bot, 60 * 1000);
+    fireTimeout(bot, 15 * 1000);
+    const push = bot.android.pushes[0] || { headers: {} };
+    check('봇 서버 주소', push.url, 'https://botapi.maple-ing.com/api/fcm/send-all');
+    check('토큰 헤더 (줄바꿈 제거)', push.headers['X-Bot-Token'], 'token-for-test');
+    check('Content-Type 유지', push.headers['Content-Type'], 'application/json; charset=UTF-8');
+}
+
+console.log('\n▸ 토큰 파일이 없어도 푸시는 나간다');
+for (const database of [{}, { 'bot_api_token.txt': '  \n' }]) {
+    const bot = androidBot(undefined, database);
+    fireTimeout(bot, 60 * 1000);
+    fireTimeout(bot, 15 * 1000);
+    check('푸시 1건', bot.android.pushes.length, 1);
+    check('헤더 없음', (bot.android.pushes[0] || { headers: {} }).headers['X-Bot-Token'], undefined);
 }
 
 console.log(`\n${failed === 0 ? '전부 통과' : failed + '건 실패'}\n`);
