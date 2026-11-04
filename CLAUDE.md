@@ -14,9 +14,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **gsbot_loop** (`Bots/gsbot_loop/gsbot_loop.js`) — 정기 알림 봇. 30초 간격으로 시간을 확인하여 조건에 맞는 알림을 전송한다(특정 날짜, 요일별, 매일). 매일 00:10 KST에 EC2에서 알림 데이터를 동기화하며, Flutter 앱에 FCM 푸시 알림을 전송한다. 관리자 명령어는 `!` 접두사를 사용한다(`!알림로드`, `!알림확인`, `!알림도움`).
 
 두 봇 모두 EC2의 Node.js API 서버와 통신한다:
-- Base URL: `http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api`
+- Base URL: `https://botapi.maple-ing.com/api`
 - gsbot: JSoup (`Packages.org.jsoup.Jsoup`)으로 HTTP 통신
 - gsbot_loop: `java.net.URL` / `HttpURLConnection`으로 HTTP 통신
+- 인증: 쓰기와 알림·건의·정기 메시지 조회는 `X-Bot-Token` 헤더가 필요하다. 저장소가 공개라 토큰은 코드에 두지 않고 폰의 `Bots/<봇>/Database/bot_api_token.txt` 에 둔다. Database 가 봇별로 나뉘어 gsbot 과 gsbot_loop 에 각각 넣는다. `Http.request` 는 헤더를 실을 수 없어 일반 GET 은 토큰 없이 받는다.
 
 ## 주요 패턴
 

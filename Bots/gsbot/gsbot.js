@@ -553,8 +553,8 @@ function replyByFormat(msg, parts) {
 // 65초로 올렸는데(gsbot_manager_server 5eab3b6) 그 10분 뒤와 이틀 뒤에도 같은
 // 예외가 났다. 그 값은 프록시↔Node 구간이라 실제로 끊기는 폰↔프록시 구간과
 // 다르다. 그래서 POST 에는 callApiPost 에 재시도를 따로 두었다.
-const API_URL = "https://api.emotionbsy.com/api";
-const BASE_URL = "https://api.emotionbsy.com";
+const API_URL = "https://botapi.maple-ing.com/api";
+const BASE_URL = "https://botapi.maple-ing.com";
 
 // JSoup 기본 타임아웃은 30초다. 리스너 스레드에서 동기로 부르므로 그동안 다른 방의
 // 메시지 처리까지 밀린다. 실측 응답은 가장 무거운 라우트도 0.4초 미만이라
@@ -1501,9 +1501,27 @@ function httpGetJson(label, apiUrl) {
     };
 }
 
+// 봇 서버 토큰. 저장소가 공개라 코드에 두지 않고 폰의 Database 에만 둔다.
+// Http.request 는 헤더를 실을 수 없어서 서버가 일반 GET 은 토큰 없이 받는다.
+// 파일이 없으면 헤더 없이 보내고, 서버가 막는 쓰기와 건의 조회만 실패한다.
+const BOT_API_TOKEN_FILE = "bot_api_token.txt";
+
+/** 봇 서버로 가는 JSoup 연결에만 쓴다. 다른 호스트로 토큰이 나가면 안 된다. */
+function withBotToken(connection) {
+    try {
+        if(Database.exists(BOT_API_TOKEN_FILE)) {
+            const token = String(Database.readString(BOT_API_TOKEN_FILE) || "").trim();
+            if(token) connection.header("X-Bot-Token", token);
+        }
+    } catch (e) {
+        Log.e("봇 서버 토큰을 읽지 못했습니다: " + e);
+    }
+    return connection;
+}
+
 /** 동기 GET. Http.request 가 1.5초에 자른 뒤의 재시도와 관리자 명령이 쓴다. */
 function syncGetJson(label, apiUrl) {
-    const response = JSOUP.connect(apiUrl)
+    const response = withBotToken(JSOUP.connect(apiUrl))
         .ignoreContentType(true)
         .timeout(API_TIMEOUT_MS)
         .get();
@@ -1530,7 +1548,7 @@ function callApiGetSync(apiFeat, params) {
 
 /** POST 한 번. 재시도는 callApiPost 가 맡는다. */
 function postOnce(apiUrl, dataObj) {
-    let connection = JSOUP.connect(apiUrl)
+    let connection = withBotToken(JSOUP.connect(apiUrl))
         .header("Content-Type", "application/json")
         .ignoreContentType(true)
         .timeout(API_TIMEOUT_MS);
