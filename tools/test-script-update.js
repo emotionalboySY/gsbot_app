@@ -53,7 +53,8 @@ console.log('\n[3] 정상 갱신');
   check('주소가 상수로 고정', url === 'https://raw.githubusercontent.com/emotionalboySY/gsbot_app/main/Bots/gsbot/gsbot.js', url);
   check('파일에 기록됨', bot.state.files['/sdcard/msgbot/Bots/gsbot/gsbot.js'] === VALID);
   check('직전 것을 .bak 으로 남김', bot.state.files['/sdcard/msgbot/Bots/gsbot/gsbot.js.bak'] === '이전 스크립트');
-  check('재컴파일 호출', r.compiled.length === 1 && r.compiled[0] === 'gsbot', String(r.compiled));
+  check('자기 자신은 직접 재컴파일하지 않음', r.compiled.length === 0, String(r.compiled));
+  check('gsbot_loop 에게 재컴파일 요청', bot.state.files['/sdcard/msgbot/Bots/gsbot/compile_request.txt'] === 'gsbot');
   check('보고가 재컴파일보다 먼저', r.replies.length >= 1 && /갱신/.test(r.replies[0].text));
 }
 

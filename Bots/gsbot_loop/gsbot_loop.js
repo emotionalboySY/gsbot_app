@@ -431,8 +431,32 @@ function sendToRooms(message) {
     return failed;
 }
 
+// gsbot 은 자기 자신을 재컴파일하면 ClosedByInterruptException 으로 멈춘다
+// (2026-11-04 실기기). 그래서 @@스크립트갱신 gsbot 은 이 파일에 요청만 남기고,
+// 다른 봇의 스레드인 여기서 대신 컴파일한다. gsbot.js 의 같은 상수와 맞춘다.
+// 컴파일이 실패해도 다시 돌지 않도록 요청을 먼저 지운다.
+const COMPILE_REQUEST_PATH = `${FileStream.getSdcardPath()}/msgbot/Bots/gsbot/compile_request.txt`;
+
+function handleCompileRequest() {
+    try {
+        if (String(FileStream.read(COMPILE_REQUEST_PATH) || "").trim() !== "gsbot") return;
+        FileStream.write(COMPILE_REQUEST_PATH, "");
+        Log.i("gsbot 재컴파일 요청 처리");
+
+        if (BotManager.compile("gsbot") === false) throw new Error("compile 이 false 를 돌려줌");
+    } catch (e) {
+        Log.e("gsbot 재컴파일 실패: " + e);
+        sendNotificationToFlutterApp(
+            "gsbot 재컴파일 실패",
+            "앱에서 gsbot 을 직접 컴파일해 주세요.",
+            { type: "error", error: String(e) }
+        );
+    }
+}
+
 function checkTimeAndNotify() {
     try {
+        handleCompileRequest();
         maybeLoadForToday();
         maybeReloadForChange();
 
