@@ -16,8 +16,23 @@ if (typeof TimeAlarmManager === 'undefined') {
 if (TimeAlarmManager.nextChangeAt === undefined) TimeAlarmManager.nextChangeAt = null;
 
 const TARGET_ROOMS = ["06-21", "집사 네 마리", "아케인 편안길드", "무친자들의 모임", "앙메톡", "그녀석의 재획교실"]; // 알림을 보낼 방 목록
-const EC2_API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api/intervalMessage/all"; // EC2 엔드포인트 URL
-const FCM_API_URL = "http://ec2-3-34-171-56.ap-northeast-2.compute.amazonaws.com:3000/api/fcm/send-all"; // fcm 알림 전송 URL
+const EC2_API_URL = "https://botapi.maple-ing.com/api/intervalMessage/all"; // EC2 엔드포인트 URL
+const FCM_API_URL = "https://botapi.maple-ing.com/api/fcm/send-all"; // fcm 알림 전송 URL
+// 봇 서버 토큰. 저장소가 공개라 코드에 두지 않고 폰의 Database 에만 둔다.
+// Database 는 봇별로 나뉘어 gsbot 과 따로 넣어야 한다. 파일이 없으면 헤더 없이 보낸다.
+const BOT_API_TOKEN_FILE = "bot_api_token.txt";
+
+function setBotToken(connection) {
+    try {
+        if(Database.exists(BOT_API_TOKEN_FILE)) {
+            const token = String(Database.readString(BOT_API_TOKEN_FILE) || "").trim();
+            if(token) connection.setRequestProperty("X-Bot-Token", token);
+        }
+    } catch (e) {
+        Log.e("봇 서버 토큰을 읽지 못했습니다: " + e);
+    }
+}
+
 // 관리자 설정 (명령어를 사용할 수 있는 사용자)
 const ADMIN_USERS = ["승엽[EmotionB_SY]"]; // 관리자 이름 목록
 
@@ -66,6 +81,7 @@ function sendNotificationToFlutterApp(title, body, data) {
         connection.setReadTimeout(10000);
         connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
         connection.setRequestProperty("Accept", "application/json");
+        setBotToken(connection);
 
         // JSON 데이터 생성
         const jsonData = JSON.stringify({
@@ -121,6 +137,7 @@ function fetchNotificationsFromEC2() {
         connection.setConnectTimeout(10000); // 10초 타임아웃
         connection.setReadTimeout(10000);
         connection.setRequestProperty("Accept", "application/json");
+        setBotToken(connection);
 
         const responseCode = connection.getResponseCode();
         if (responseCode !== 200) {
