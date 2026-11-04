@@ -1719,6 +1719,12 @@ const ROOM_LIST = ["06-21", "집사 네 마리", "그녀석의 재획교실", "�
 const SCRIPT_SOURCE_BASE = "https://raw.githubusercontent.com/emotionalboySY/gsbot_app/main/Bots";
 const UPDATABLE_BOTS = ["gsbot", "gsbot_noti", "gsbot_loop"];
 
+// gsbot 은 자기 자신을 재컴파일할 수 없다. 컴파일이 이 봇의 스크립트 스레드에서
+// 돌다가 그 스레드가 중단돼 ClosedByInterruptException 으로 실패하고 봇이 멈춘다
+// (2026-11-04 실기기). 다른 봇이 부르면 성공하므로, 이 파일에 요청을 남기고
+// gsbot_loop 의 30초 틱이 대신 컴파일한다. gsbot_loop.js 의 같은 상수와 맞춘다.
+const COMPILE_REQUEST_PATH = `${FileStream.getSdcardPath()}/msgbot/Bots/gsbot/compile_request.txt`;
+
 // 받은 내용이 스크립트가 맞는지 보는 하한. 404 안내 페이지나 잘린 응답이
 // 그대로 덮어써지면 봇이 통째로 죽는다. 현재 gsbot.js 가 9만 자 남짓이라
 // 4천 자면 정상 파일을 자를 일이 없다.
@@ -1736,9 +1742,8 @@ function scriptPathOf(botName) {
 /**
  * 저장소의 최신 스크립트를 받아 폰의 파일을 덮어쓰고 재컴파일한다.
  *
- * 자기 자신(gsbot)을 갱신하면 재컴파일 시점에 지금 돌고 있는 컨텍스트가
- * 갈린다. 그래서 결과 보고를 먼저 하고 compile 을 맨 마지막에 부른다 —
- * 순서를 바꾸면 성공해도 답이 오지 않는다.
+ * 자기 자신(gsbot)은 직접 compile 하지 않고 gsbot_loop 에게 요청만 남긴다
+ * (COMPILE_REQUEST_PATH). 재컴파일되면 지금 컨텍스트가 갈리므로 보고를 먼저 한다.
  */
 function handleScriptUpdate(msg, options) {
     const botName = options.length > 0 ? String(options[0]) : "gsbot";
@@ -1817,9 +1822,20 @@ function handleScriptUpdate(msg, options) {
     const sizeText = previous
         ? `${previous.length}자 → ${source.length}자`
         : `${source.length}자`;
+
+    if(botName === "gsbot") {
+        try {
+            FileStream.write(COMPILE_REQUEST_PATH, botName);
+            msg.reply(`[스크립트 갱신] ${botName}\n${sizeText}\n\n30초 안에 gsbot_loop 가 재컴파일합니다.\n그 뒤에도 답이 없으면 앱에서 직접 컴파일해 주세요.`);
+        } catch (e) {
+            Log.e("재컴파일 요청 실패: " + e);
+            msg.reply(`파일은 받았지만 재컴파일을 요청하지 못했습니다. 앱에서 직접 컴파일해 주세요.\n${e}`);
+        }
+        return;
+    }
+
     msg.reply(`[스크립트 갱신] ${botName}\n${sizeText}\n\n재컴파일합니다.`);
 
-    // 마지막. 자기 자신이면 이 아래로는 돌지 않는다.
     try {
         BotManager.compile(botName);
     } catch (e) {

@@ -175,5 +175,46 @@ console.log('\n▸ 시계가 뒤로 가도 멈추지 않는다');
     check('다시 앞으로 가면 이어서 판정', texts(sentSince(bot, before)), ['[매일] 메할일 점검\n둘째 줄', '[특정] 패치 예고']);
 }
 
+function tick(bot) {
+    bot.advanceTime(30 * 1000);
+    bot.fireTimers('timeout');
+    bot.fireTimers('interval');
+}
+
+console.log('\n▸ gsbot 재컴파일 요청: 틱에서 대신 컴파일하고 요청을 지운다');
+{
+    const REQUEST = '/sdcard/msgbot/Bots/gsbot/compile_request.txt';
+    const bot = newBot(kst(9, 9, 21, 59, 40));
+    tick(bot);
+    check('요청이 없으면 컴파일 안 함', bot.state.compiled, []);
+
+    bot.state.files[REQUEST] = 'gsbot';
+    tick(bot);
+    check('gsbot 을 한 번 컴파일', bot.state.compiled, ['gsbot']);
+    check('요청을 지움', bot.state.files[REQUEST], '');
+
+    tick(bot);
+    check('다음 틱에 반복하지 않음', bot.state.compiled, ['gsbot']);
+
+    bot.state.files[REQUEST] = '../gsbot_noti';
+    tick(bot);
+    check('내용이 다르면 무시', bot.state.compiled, ['gsbot']);
+}
+
+console.log('\n▸ gsbot 재컴파일 실패: 틱은 계속 돌고 다시 시도하지 않는다');
+{
+    const REQUEST = '/sdcard/msgbot/Bots/gsbot/compile_request.txt';
+    const bot = newBot(kst(9, 9, 21, 59, 40));
+    let calls = 0;
+    bot.sandbox.BotManager.compile = () => { calls++; return false; };
+    bot.state.files[REQUEST] = 'gsbot';
+    tick(bot);
+    check('컴파일 시도 1회', calls, 1);
+    check('같은 틱의 알림 전송은 계속', bot.state.sent.length, ROOM_COUNT);
+    check('실패 로그', bot.state.logs.some(l => l.level === 'e' && /gsbot 재컴파일 실패/.test(l.text)), true);
+    tick(bot);
+    check('반복 시도 없음', calls, 1);
+}
+
 console.log(failed ? `\n${failed}개 실패\n` : '\n모두 통과\n');
 process.exit(failed ? 1 : 0);
