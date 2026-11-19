@@ -161,6 +161,44 @@ console.log('\n▸ !알림확인 에 마지막 틱과 답장 불가 방이 붙�
     check('관리자 아니면 무응답', r3.replies.length, 0);
 }
 
+console.log('\n▸ !알림확인 은 번호 목록, !알림확인 [번호] 는 그 알림의 시각과 메시지');
+{
+    const bot = newBot(kst(9, 9, 21, 59, 40));
+    const list = bot.send({ content: '!알림확인', author: { name: ADMIN } }).replies[0].text;
+    check('목록 머리', /^\[알림 목록\] 5개\n\n1\. /.test(list), true);
+    const numbered = list.split('\n').filter(l => /^\d+\. /.test(l));
+    check('1~5번이 차례로', numbered.map(l => Number(l.split('.')[0])), [1, 2, 3, 4, 5]);
+    check('안내 줄', /\n자세히 보기: !알림확인 \[번호\]\n/.test(list), true);
+    check('상태 요약은 목록 아래에 남음', /총합: 5개[\s\S]*답장 불가 방: 없음$/.test(list), true);
+
+    // 목록의 번호로 상세를 부르면 같은 알림이 나온다
+    const weeklyLine = numbered.find(l => /매주 수요일 22시 30분 - \[수요일\] 주간 초기화 대비$/.test(l));
+    check('요일 알림이 목록에 있음', Boolean(weeklyLine), true);
+    const no = Number(weeklyLine.split('.')[0]);
+    const detail = bot.send({ content: `!알림확인 ${no}`, author: { name: ADMIN } }).replies[0].text;
+    check('상세: 시각, 구분선, 메시지 순', detail, `[${no}] 매주 수요일 22시 30분\n────────────\n[수요일] 주간 초기화 대비`);
+
+    const dailyNo = Number(numbered.find(l => /메할일 점검$/.test(l)).split('.')[0]);
+    const daily = bot.send({ content: `!알림확인  ${dailyNo}`, author: { name: ADMIN } }).replies[0].text;
+    check('여러 줄 메시지는 그대로', daily, `[${dailyNo}] 매일 22시 0분\n────────────\n[매일] 메할일 점검\n둘째 줄`);
+
+    const exactNo = Number(numbered.find(l => /패치 예고$/.test(l)).split('.')[0]);
+    const exact = bot.send({ content: `!알림확인 ${exactNo}`, author: { name: ADMIN } }).replies[0].text;
+    check('특정 날짜 알림의 시각', exact.split('\n')[0], `[${exactNo}] 2026년 9월 9일 22시 5분`);
+
+    const out0 = bot.send({ content: '!알림확인 0', author: { name: ADMIN } }).replies[0].text;
+    const out9 = bot.send({ content: '!알림확인 9', author: { name: ADMIN } }).replies[0].text;
+    check('범위 밖 번호 안내', [/1~5 사이/.test(out0), /1~5 사이/.test(out9)], [true, true]);
+    check('붙여 쓴 글자는 무시', bot.send({ content: '!알림확인x', author: { name: ADMIN } }).replies.length, 0);
+    check('관리자 아니면 상세도 무응답', bot.send({ content: '!알림확인 1', author: { name: '남' } }).replies.length, 0);
+
+    bot.sandbox.TimeAlarmManager.notifications = [];
+    const empty = bot.send({ content: '!알림확인', author: { name: ADMIN } }).replies[0].text;
+    check('빈 목록 안내', /^현재 로드된 알림이 없습니다\./.test(empty), true);
+    const emptyDetail = bot.send({ content: '!알림확인 1', author: { name: ADMIN } }).replies[0].text;
+    check('빈 목록에서 상세', /^현재 로드된 알림이 없습니다\./.test(emptyDetail), true);
+}
+
 console.log('\n▸ 시계가 뒤로 가도 멈추지 않는다');
 {
     const bot = newBot(kst(9, 9, 21, 59, 40));

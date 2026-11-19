@@ -249,16 +249,21 @@ function titleOf(n) {
     return String(n.message || "").split("\n")[0].trim().slice(0, 40) || "(내용 없음)";
 }
 
-function describeNotification(n) {
+// 발송 주기와 시각 — "2026년 9월 20일 21시 0분" / "매주 월요일 21시 0분" / "매일 21시 0분"
+function scheduleOf(n) {
     const when = n.hour + "시 " + n.minute + "분";
     if (n.year !== undefined && n.month !== undefined && n.day !== undefined) {
-        return n.year + "년 " + n.month + "월 " + n.day + "일 " + when + " - " + titleOf(n);
+        return n.year + "년 " + n.month + "월 " + n.day + "일 " + when;
     }
     if (n.dayOfWeek !== undefined) {
         const label = DAY_OF_WEEK_LABEL[String(n.dayOfWeek).toLowerCase()] || String(n.dayOfWeek);
-        return "매주 " + label + " " + when + " - " + titleOf(n);
+        return "매주 " + label + " " + when;
     }
-    return "매일 " + when + " - " + titleOf(n);
+    return "매일 " + when;
+}
+
+function describeNotification(n) {
+    return scheduleOf(n) + " - " + titleOf(n);
 }
 
 // 정확한 날짜 → 요일 → 매일 순, 그 안에서는 시각 순
@@ -271,15 +276,20 @@ function sortKey(n) {
     return [2, 0, 0, 0, n.hour, n.minute];
 }
 
+// 로드 요약과 !알림확인 목록이 같은 순서를 쓴다. !알림확인 [번호] 의 번호가 이 순서다
+function sortedNotifications(notifications) {
+    return notifications.slice().sort((a, b) => {
+        const ka = sortKey(a), kb = sortKey(b);
+        for (let i = 0; i < ka.length; i += 1) if (ka[i] !== kb[i]) return ka[i] - kb[i];
+        return 0;
+    });
+}
+
 function loadSummary(notifications) {
     const count = notifications.length;
     const head = "EC2에서 " + count + "개의 알림 데이터를 성공적으로 로드했습니다.";
     if (count === 0) return head;
-    const lines = notifications.slice().sort((a, b) => {
-        const ka = sortKey(a), kb = sortKey(b);
-        for (let i = 0; i < ka.length; i += 1) if (ka[i] !== kb[i]) return ka[i] - kb[i];
-        return 0;
-    }).map(describeNotification);
+    const lines = sortedNotifications(notifications).map(describeNotification);
     return head + "\n\n" + lines.join("\n");
 }
 
@@ -571,6 +581,28 @@ function getNotificationInfo() {
     return `${loaded}\n\n마지막 확인: ${tick}\n다음 변경 예약: ${change}\n답장 불가 방: ${blocked.length > 0 ? blocked.join(" / ") : "없음"}`;
 }
 
+const NO_NOTIFICATIONS = "현재 로드된 알림이 없습니다. !알림로드 로 불러올 수 있습니다.";
+
+// !알림확인 — 번호를 매긴 알림 목록, 그 아래에 틱 상태
+function notificationList() {
+    const notifications = sortedNotifications(TimeAlarmManager.notifications || []);
+    if (notifications.length === 0) return NO_NOTIFICATIONS + "\n\n" + getNotificationInfo();
+    const lines = notifications.map((n, i) => (i + 1) + ". " + describeNotification(n));
+    return "[알림 목록] " + notifications.length + "개\n\n" + lines.join("\n") +
+        "\n\n자세히 보기: !알림확인 [번호]\n\n" + getNotificationInfo();
+}
+
+// !알림확인 [번호] — 발송 주기와 시각, 구분선, 실제 메시지
+function notificationDetail(index) {
+    const notifications = sortedNotifications(TimeAlarmManager.notifications || []);
+    if (notifications.length === 0) return NO_NOTIFICATIONS;
+    if (!(index >= 1 && index <= notifications.length)) {
+        return "번호는 1~" + notifications.length + " 사이로 입력해 주세요. 목록은 !알림확인 으로 볼 수 있습니다.";
+    }
+    const n = notifications[index - 1];
+    return "[" + index + "] " + scheduleOf(n) + "\n" + "────────────" + "\n" + String(n.message || "(내용 없음)");
+}
+
 // 서비스 시작
 scheduleDataLoad(); // 데이터 로드 스케줄링
 startSyncedAlarmService(); // 알람 서비스 시작
@@ -598,6 +630,7 @@ function onMessage(msg) {
     }
 
     const content = msg.content.trim();
+    const checkMatch = content.match(/^!알림확인(?:\s+(\d+))?$/);
 
     // !알림로드 명령어
     if (content === "!알림로드") {
@@ -614,10 +647,9 @@ function onMessage(msg) {
         if (result.success) TimeAlarmManager.lastLoadDay = kstDayIndex(Date.now());
     }
 
-    // !알림확인 명령어
-    else if (content === "!알림확인") {
-        const info = getNotificationInfo();
-        msg.reply(info);
+    // !알림확인 — 목록. !알림확인 [번호] — 그 알림의 발송 시각과 메시지
+    else if (checkMatch) {
+        msg.reply(checkMatch[1] === undefined ? notificationList() : notificationDetail(Number(checkMatch[1])));
     }
 
     // !알림도움 명령어
@@ -625,7 +657,8 @@ function onMessage(msg) {
         const helpText =
             "[정기 알림 봇 명령어]\n\n" +
             "!알림로드 - EC2에서 알림 데이터 다시 로드\n" +
-            "!알림확인 - 현재 로드된 알림 개수 확인\n" +
+            "!알림확인 - 로드된 알림 목록(번호)과 상태\n" +
+            "!알림확인 [번호] - 그 알림의 발송 시각과 메시지\n" +
             "!알림도움 - 이 도움말 표시\n\n" +
             "※ 알림은 자동으로 매일 00:10에 업데이트됩니다.";
         msg.reply(helpText);
